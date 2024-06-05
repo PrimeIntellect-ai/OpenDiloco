@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OpenDiloco"
+version = "0.1.0"
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["open_diloco"]
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = ["hivemind"]
+line-length = 120 # thanks to johannes screen's
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}

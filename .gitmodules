@@ -1,0 +1,7 @@
+[submodule "hivemind_source"]
+	path = hivemind_source
+	url = https://github.com/PrimeIntellect-ai/hivemind.git
+	branch = feat-add-downloading-time
+[submodule "pydantic_config"]
+	path = pydantic_config
+	url = https://github.com/samsja/pydantic_config.git

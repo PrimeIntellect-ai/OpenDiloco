@@ -1,0 +1,5 @@
+wandb/*
+data/*
+outputs/*
+*ipynb
+logs/*

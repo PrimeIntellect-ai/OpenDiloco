@@ -1,0 +1,13 @@
+{
+    "architectures": [
+      "LlamaForCausalLM"
+    ],
+    "model_type": "llama",
+    "hidden_size": 128,
+    "intermediate_size": 512,
+    "num_attention_heads": 4,
+    "num_hidden_layers": 6,
+    "rms_norm_eps": 1e-05,
+    "use_cache": false
+  }
+
