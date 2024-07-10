@@ -1,6 +1,6 @@
 # Development workflow
 
-This is the develpment workflow of prime intellect to build upon hivemind
+This is the development workflow of prime intellect to build upon hivemind
 
 ## Install dependencies
 

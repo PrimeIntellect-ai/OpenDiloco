@@ -117,7 +117,7 @@ def get_compression_kwargs(hivemind_compression: str) -> dict:
 
 def found_inf_grad(optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler) -> bool:
     """
-    this function check if the scaler has found inf grad for the optimizer. It does by looking up the optimzier state
+    this function check if the scaler has found inf grad for the optimizer. It does by looking up the optimizer state
     regsited inside the scaler. Code is mostly copied/inspired by the torch GradScaler codebase.
     """
     if not scaler._enabled:
