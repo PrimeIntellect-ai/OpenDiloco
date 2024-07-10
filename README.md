@@ -30,8 +30,26 @@ source .venv/bin/activate
 
 Install python dependencies:
 ```bash
-pip install -r requirements.txt
+# Hivemind
+cd hivemind_source
 pip install .
+cp build/lib/hivemind/proto/* hivemind/proto/.
+pip install -e ".[all]"
+cd ..
+# Requirements
+pip install -r requirements.txt
+# Others
+pip install --pre torchdata --index-url https://download.pytorch.org/whl/nightly/cpu
+pip install -e ./pydantic_config
+# OpenDiLoCo
+pip install .
+```
+
+Optionally, you can install flash-attn to use Flash Attention 2.
+This requires your system to have cuda compiler set up.
+```
+# (Optional) flash-attn
+pip install flash-attn==2.5.8
 ```
 
 ## Docker container
@@ -86,13 +104,13 @@ The [multiaddress](https://github.com/multiformats/multiaddr) strings listed aft
 
 ## Stopping hivemind runs
 
-The current implementation of hivemind doesnt handle Ctrl+C keyboard interrupt well. You can stop the runs using `pkill`:
+The current implementation of hivemind doesn't handle Ctrl+C keyboard interrupt well. You can stop the runs using `pkill`:
 ```bash
 pkill -f torchrun
 ```
 
 ## Resuming from checkpoint
-To resume from checkpoint, you can pass the `--resume-from-checkpoint` argment to the training script. e.g.
+To resume from checkpoint, you can pass the `--resume-from-checkpoint` argument to the training script. e.g.
 ```bash
 torchrun --nproc_per_node=8 \
     train_fsdp.py \
