@@ -1,6 +1,6 @@
 # OpenDiLoCo
 
-This repository contains the training code and experiment results for the paper "OpenDiLoCo: An Open-Source Framework for Globally Distributed Low-Communication Training".
+This repository contains the training code and experiment results for the paper [OpenDiLoCo: An Open-Source Framework for Globally Distributed Low-Communication Training](https://arxiv.org/abs/2407.07852).
 
 # Setup
 
