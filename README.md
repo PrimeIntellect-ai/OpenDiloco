@@ -317,7 +317,7 @@ We recommend using `bf16` to avoid scaling and desynchronization issues with hiv
 
 2. `RuntimeError: CUDA error: invalid device ordinal`
     A possible culprit is that your `--nproc-per-node` argument for the torchrun launcher is set incorrectly.
-    Please set it to an integer less than equal to the number of of gpus you have on your machine.
+    Please set it to an integer less than equal to the number of gpus you have on your machine.
 
 3. `torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate...`
     A possible culprit is that your `--per-device-train-batch-size` is too high.
