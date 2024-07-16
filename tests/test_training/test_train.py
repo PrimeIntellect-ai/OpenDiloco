@@ -10,6 +10,7 @@ import gc
 
 from hivemind.dht.dht import DHT
 from open_diloco.train_fsdp import train, Config, ddp_setup, destroy_process_group, HvConfig
+from open_diloco.llama import Config as ModelConfig
 
 
 @pytest.fixture(autouse=True)
@@ -46,8 +47,16 @@ def random_available_port():
 
 @pytest.fixture
 def config() -> Config:
+    model_config = ModelConfig(
+        name="llama_2m",
+        n_embd=64,
+        intermediate_size=256,
+        n_head=2,
+        n_layer=2,
+        vocab_size=1024,
+    )
     return Config(
-        path_model="tests/models/llama-2m-fresh",
+        llama_config=model_config,
         fake_data=True,
         torch_compile=False,
         lr=1e-2,
