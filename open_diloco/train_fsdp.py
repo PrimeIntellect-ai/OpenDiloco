@@ -116,7 +116,7 @@ class HvConfig(BaseConfig):
 class Config(BaseConfig):
     llama_config: str | ModelConfig = "open_diloco/configs/config_1b.json"
     torch_compile: bool = True
-    attn_implementation: str = "sdpa"
+    attention_impl: Literal["sdpa", "fa", "xformers"] = "sdpa"
     # Data
     dataset_name_or_path: str = "allenai/c4"
     seq_length: int = 1024
@@ -184,11 +184,13 @@ def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> S
 def get_model(config: Config) -> GPT:
     # Load model
     if isinstance(config.llama_config, ModelConfig):
-        return GPT(config.llama_config)
+        llama_config = config.llama_config
     else:
         with open(config.llama_config) as f:
             llama_config = ModelConfig(**json.load(f))
-        return GPT(llama_config)
+
+    llama_config.attention_impl = config.attention_impl
+    return GPT(llama_config)
 
 
 def train(config: Config):
