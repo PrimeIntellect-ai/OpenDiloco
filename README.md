@@ -30,26 +30,16 @@ source .venv/bin/activate
 
 Install python dependencies:
 ```bash
-# Hivemind
-cd hivemind_source
 pip install .
-cp build/lib/hivemind/proto/* hivemind/proto/.
-pip install -e ".[all]"
-cd ..
-# Requirements
-pip install -r requirements.txt
-# Others
 pip install --pre torchdata --index-url https://download.pytorch.org/whl/nightly/cpu
-pip install -e ./pydantic_config
-# OpenDiLoCo
-pip install .
 ```
 
 Optionally, you can install flash-attn to use Flash Attention 2.
 This requires your system to have cuda compiler set up.
-```
+
+```bash
 # (Optional) flash-attn
-pip install flash-attn==2.5.8
+pip install flash-attn>=2.5.8
 ```
 
 ## Docker container
@@ -305,20 +295,10 @@ We recommend using `bf16` to avoid scaling and desynchronization issues with hiv
 
 
 # Debugging Issues
-1. `hivemind` or `pydantic_config`
-    If you are having issues with `hivemind` or `pydantic_config`, the issue could be related to submodules.
-    You can clean and reinitialize the submodules from the root of the repository with the following commands:
-
-    ```
-    git submodule deinit -f .
-    git clean -xdf
-    git submodule update --init --recursive
-    ```
-
-2. `RuntimeError: CUDA error: invalid device ordinal`
+1. `RuntimeError: CUDA error: invalid device ordinal`
     A possible culprit is that your `--nproc-per-node` argument for the torchrun launcher is set incorrectly.
     Please set it to an integer less than equal to the number of gpus you have on your machine.
 
-3. `torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate...`
+2. `torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate...`
     A possible culprit is that your `--per-device-train-batch-size` is too high.
     Try a smaller value.
