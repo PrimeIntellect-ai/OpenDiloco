@@ -35,6 +35,7 @@ RUN echo "export PATH=\"/opt/conda/bin:/root/.cargo/bin:\$PATH\"" >> /root/.bash
 # Install Python dependencies (The gradual copies help with caching)
 WORKDIR open_diloco
 RUN pip install --pre torchdata --index-url https://download.pytorch.org/whl/nightly/cpu
+RUN pip install flash-attn>=2.5.8
 COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY requirements-dev.txt requirements-dev.txt
