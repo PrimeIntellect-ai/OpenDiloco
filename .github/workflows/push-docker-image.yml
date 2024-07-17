@@ -20,10 +20,7 @@ jobs:
       # Link to discussion: https://github.com/orgs/community/discussions/25678
 
       - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: true
-          
+        uses: actions/checkout@v3          
       - name: Docker meta
         id: meta
         uses: crazy-max/ghaction-docker-meta@v2
