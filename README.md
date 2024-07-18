@@ -255,9 +255,8 @@ Specifically, if you want to use OpenDiLoCo in your own training script, you can
 from functools import partial
 
 from open_diloco.hivemind_diloco import DiLoCoOptimizer
-
-import
 from hivemind.dht.dht import DHT
+
 
 dht = DHT(start=True, initial_peers=os.environ["PEERS"])
 
