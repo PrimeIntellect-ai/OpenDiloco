@@ -11,8 +11,6 @@ dynamic = ["dependencies"]
 packages = ["open_diloco"]
 
 [tool.ruff]
-# Exclude a variety of commonly ignored directories.
-exclude = ["hivemind"]
 line-length = 120 # thanks to johannes screen's
 
 [tool.setuptools.dynamic]
