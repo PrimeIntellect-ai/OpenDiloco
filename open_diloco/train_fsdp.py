@@ -402,7 +402,7 @@ def train(config: Config):
             else:
                 scaler.unscale_(optimizer=optimizer)
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping
+            model.clip_grad_norm_(1.0)  # gradient clipping
 
             if world_messenger_hv:
                 optimizer.step(scaler=scaler)
