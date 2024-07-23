@@ -206,7 +206,7 @@ def get_profiler(enable: bool, rank: int):
     if enable:
         return profile(
             activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-            schedule=torch.profiler.schedule(wait=1, warmup=1, active=1),
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=2),
             on_trace_ready=trace_handler,
             profile_memory=True,
             with_stack=False,
