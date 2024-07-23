@@ -37,6 +37,8 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed import broadcast_object_list
+from torch.profiler import profile, ProfilerActivity
+
 from open_diloco.ckpt_utils import load_checkpoint, save_checkpoint
 from open_diloco.hivemind_diloco import AllReduceStrategy, DiLoCoOptimizer
 from open_diloco.llama import GPT, Config as ModelConfig
@@ -140,6 +142,7 @@ class Config(BaseConfig):
     hv: HvConfig | None = None  # if no hv config then hivemind is disabled
     fake_data: bool = False
     max_steps: int | None = None
+    profiler: bool = False
 
 
 def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> StatefulDataLoader:
@@ -182,7 +185,7 @@ def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> S
 
 
 def get_model(config: Config) -> GPT:
-    # Load model
+    # Load model1
     if isinstance(config.llama_config, ModelConfig):
         llama_config = config.llama_config
     else:
@@ -191,6 +194,27 @@ def get_model(config: Config) -> GPT:
 
     llama_config.attention_impl = config.attention_impl
     return GPT(llama_config)
+
+
+def get_profiler(enable: bool, rank: int):
+    def trace_handler(p):
+        if rank == 0:
+            output = p.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_memory_usage", row_limit=20)
+            print(output)
+            p.export_chrome_trace("./trace_" + str(p.step_num) + ".json")
+
+    if enable:
+        return profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=2),
+            on_trace_ready=trace_handler,
+            profile_memory=True,
+            with_stack=False,
+            experimental_config=torch._C._profiler._ExperimentalConfig(verbose=True),
+        )
+
+    else:
+        return nullcontext()
 
 
 def train(config: Config):
@@ -375,151 +399,153 @@ def train(config: Config):
     log(f"starting from step {start_step}")
 
     loss_batch = 0
+    with get_profiler(enable=config.profiler, rank=rank) as profiler:
+        for step, batch in enumerate(iterable=train_dataloader, start=start_step * gradient_accumulation_steps):
+            real_step = (step + 1) // gradient_accumulation_steps
+            is_accumulating = bool((step + 1) % gradient_accumulation_steps)
 
-    for step, batch in enumerate(iterable=train_dataloader, start=start_step * gradient_accumulation_steps):
-        real_step = (step + 1) // gradient_accumulation_steps
-        is_accumulating = bool((step + 1) % gradient_accumulation_steps)
-
-        logging_activations_steps = (
-            config.log_activations_steps is not None and real_step % config.log_activations_steps == 0
-        )
-
-        if logging_activations_steps:
-            activation_monitor = ActivationNormMetric(
-                target_layers=TARGET_LAYER_ACTIVATIONS,
-                gradient_accumulation_steps=gradient_accumulation_steps,
+            logging_activations_steps = (
+                config.log_activations_steps is not None and real_step % config.log_activations_steps == 0
             )
-            activation_monitor.register_metrics_hooks(model)
-
-        for key in batch.keys():
-            batch[key] = batch[key].to("cuda")
-
-        with model.no_sync() if is_accumulating else nullcontext():
-            inputs_ids = batch["input_ids"]
-
-            input_ids = inputs_ids[:, :-1]
-            target = inputs_ids[:, 1:]
-
-            output = model(input_ids)
-
-            flatten_logits = rearrange(output, "b seq vocab -> (b seq) vocab")
-            flatten_target = rearrange(target, "b seq -> (b seq)")
-
-            loss = torch.nn.functional.cross_entropy(flatten_logits, flatten_target)
-            loss = loss / gradient_accumulation_steps
-            loss_batch += loss.detach()
-
-            scaler.scale(loss).backward()
-
-        if not is_accumulating:
-            if world_messenger_hv:
-                scaler.unscale_(optimizer=optimizer.inner_optimizer)
-            else:
-                scaler.unscale_(optimizer=optimizer)
-
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping
-
-            if world_messenger_hv:
-                optimizer.step(scaler=scaler)
-
-                # todo(sami): refactor to use built in pytorch mechanism to handle scaler manually
-                # should allow to just do scaler.step(optimizer)
-            else:
-                scaler.step(optimizer)
-
-            scaler.update()
-
-            scheduler.step()
-            optimizer.zero_grad()
 
             if logging_activations_steps:
-                activation_monitor.remove_hooks()
+                activation_monitor = ActivationNormMetric(
+                    target_layers=TARGET_LAYER_ACTIVATIONS,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                )
+                activation_monitor.register_metrics_hooks(model)
 
-            if config.hv is not None:
-                if int(real_step) % config.hv.local_steps == 0:
-                    for param in model.parameters():
-                        torch.distributed.broadcast(param.data, src=0)
+            for key in batch.keys():
+                batch[key] = batch[key].to("cuda")
 
-            if rank == 0:
-                total_samples = real_step * config.total_batch_size
-                effective_step = real_step
+            with model.no_sync() if is_accumulating else nullcontext():
+                inputs_ids = batch["input_ids"]
 
-                if config.hv is not None:
-                    # Note that this assumes that we have the right amount of worker since t0.
-                    # Not robust to off/on ramping
-                    effective_step = real_step * config.hv.galaxy_size
-                    total_samples = real_step * config.total_batch_size * config.hv.galaxy_size
+                input_ids = inputs_ids[:, :-1]
+                target = inputs_ids[:, 1:]
 
-                metrics = {
-                    "Loss": loss_batch.item(),
-                    "step": real_step,
-                    "lr": [group["lr"] for group in optimizer.param_groups][0],
-                    "Perplexity": torch.exp(loss_batch).item(),
-                    "effective_step": effective_step,  # at each step the we have compute total_batch_size. Independent of the number of GPUs
-                    "total_samples": total_samples,
-                    "time_taken": time.time() - current_time,
-                    "tokens_per_second": config.seq_length * config.total_batch_size / (time.time() - current_time),
-                }
+                output = model(input_ids)
+
+                flatten_logits = rearrange(output, "b seq vocab -> (b seq) vocab")
+                flatten_target = rearrange(target, "b seq -> (b seq)")
+
+                loss = torch.nn.functional.cross_entropy(flatten_logits, flatten_target)
+                loss = loss / gradient_accumulation_steps
+                loss_batch += loss.detach()
+
+                scaler.scale(loss).backward()
+
+            if not is_accumulating:
+                if world_messenger_hv:
+                    scaler.unscale_(optimizer=optimizer.inner_optimizer)
+                else:
+                    scaler.unscale_(optimizer=optimizer)
+
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # gradient clipping
 
                 if world_messenger_hv:
-                    outer_lr = [group["lr"] for group in optimizer.state_averager.optimizer.param_groups][0]
-                    num_peers = optimizer.tracker.global_progress.num_peers
-                    if num_peers == 0:
-                        num_peers = 1
+                    optimizer.step(scaler=scaler)
 
-                    metrics["outer_lr"] = outer_lr
-                    metrics["num_peers"] = num_peers
+                    # todo(sami): refactor to use built in pytorch mechanism to handle scaler manually
+                    # should allow to just do scaler.step(optimizer)
+                else:
+                    scaler.step(optimizer)
+
+                scaler.update()
+
+                scheduler.step()
+                optimizer.zero_grad()
 
                 if logging_activations_steps:
-                    metrics.update(activation_monitor.log_activations)
+                    activation_monitor.remove_hooks()
 
-                current_time = time.time()
+                if config.hv is not None:
+                    if int(real_step) % config.hv.local_steps == 0:
+                        for param in model.parameters():
+                            torch.distributed.broadcast(param.data, src=0)
 
-                wandb.log(metrics)
+                if rank == 0:
+                    total_samples = real_step * config.total_batch_size
+                    effective_step = real_step
 
-                if config.hv is None:
-                    log(
-                        f"step: {real_step}, loss: {loss_batch.item()}, lr {[group['lr'] for group in optimizer.param_groups][0]}"
+                    if config.hv is not None:
+                        # Note that this assumes that we have the right amount of worker since t0.
+                        # Not robust to off/on ramping
+                        effective_step = real_step * config.hv.galaxy_size
+                        total_samples = real_step * config.total_batch_size * config.hv.galaxy_size
+
+                    metrics = {
+                        "Loss": loss_batch.item(),
+                        "step": real_step,
+                        "lr": [group["lr"] for group in optimizer.param_groups][0],
+                        "Perplexity": torch.exp(loss_batch).item(),
+                        "effective_step": effective_step,  # at each step the we have compute total_batch_size. Independent of the number of GPUs
+                        "total_samples": total_samples,
+                        "time_taken": time.time() - current_time,
+                        "tokens_per_second": config.seq_length * config.total_batch_size / (time.time() - current_time),
+                    }
+
+                    if world_messenger_hv:
+                        outer_lr = [group["lr"] for group in optimizer.state_averager.optimizer.param_groups][0]
+                        num_peers = optimizer.tracker.global_progress.num_peers
+                        if num_peers == 0:
+                            num_peers = 1
+
+                        metrics["outer_lr"] = outer_lr
+                        metrics["num_peers"] = num_peers
+
+                    if logging_activations_steps:
+                        metrics.update(activation_monitor.log_activations)
+
+                    current_time = time.time()
+
+                    wandb.log(metrics)
+
+                    if config.hv is None:
+                        log(
+                            f"step: {real_step}, loss: {loss_batch.item()}, lr {[group['lr'] for group in optimizer.param_groups][0]}"
+                        )
+
+                # Save checkpoint every 'checkpoint_interval' steps
+                if config.checkpoint_interval is not None and real_step % config.checkpoint_interval == 0:
+                    log(f"saving at step {real_step}, step {step+1}")
+                    ckpt_path = os.path.join(
+                        get_ckpt_folder(config.checkpoint_path, training_date, config.project, run_id),
+                        f"model_step_{int(real_step)}",
                     )
 
-            # Save checkpoint every 'checkpoint_interval' steps
-            if config.checkpoint_interval is not None and real_step % config.checkpoint_interval == 0:
-                log(f"saving at step {real_step}, step {step+1}")
-                ckpt_path = os.path.join(
-                    get_ckpt_folder(config.checkpoint_path, training_date, config.project, run_id),
-                    f"model_step_{int(real_step)}",
-                )
-
-                if world_messenger_hv:
-                    assert isinstance(optimizer, DiLoCoOptimizer)
-                    with optimizer.tracker.pause_updates():
+                    if world_messenger_hv:
+                        assert isinstance(optimizer, DiLoCoOptimizer)
+                        with optimizer.tracker.pause_updates():
+                            save_checkpoint(
+                                checkpoint_path=ckpt_path,
+                                model=model,
+                                optimizer=optimizer.inner_optimizer,
+                                scheduler=scheduler,
+                                outer_optimizer=optimizer.state_averager.optimizer,
+                                loss=loss_batch.item(),
+                                scaler=scaler,
+                                data_loader=train_dataloader,
+                                save_global_state=True,
+                            )
+                    else:
                         save_checkpoint(
                             checkpoint_path=ckpt_path,
                             model=model,
-                            optimizer=optimizer.inner_optimizer,
+                            optimizer=optimizer,
                             scheduler=scheduler,
-                            outer_optimizer=optimizer.state_averager.optimizer,
                             loss=loss_batch.item(),
                             scaler=scaler,
                             data_loader=train_dataloader,
-                            save_global_state=True,
+                            save_global_state=rank == 0,
                         )
-                else:
-                    save_checkpoint(
-                        checkpoint_path=ckpt_path,
-                        model=model,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
-                        loss=loss_batch.item(),
-                        scaler=scaler,
-                        data_loader=train_dataloader,
-                        save_global_state=rank == 0,
-                    )
 
-            loss_batch = 0
+                loss_batch = 0
+                if config.profiler:
+                    profiler.step()
+                if config.max_steps is not None and real_step >= config.max_steps:
+                    break
 
-            if config.max_steps is not None and real_step >= config.max_steps:
-                break
     log("Training completed.")
     wandb.finish()
 
