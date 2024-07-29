@@ -301,3 +301,17 @@ We recommend using `bf16` to avoid scaling and desynchronization issues with hiv
 2. `torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate...`
     A possible culprit is that your `--per-device-train-batch-size` is too high.
     Try a smaller value.
+
+# Citation
+If you use OpenDiloco for your research, please cite our [paper](https://arxiv.org/abs/2407.07852):
+```bibtex
+@misc{jaghouar2024opendiloco,
+    title={OpenDiLoCo: An Open-Source Framework for Globally Distributed Low-Communication Training}, 
+    author={Sami Jaghouar and Jack Min Ong and Johannes Hagemann},
+    year={2024},
+    eprint={2407.07852},
+    archivePrefix={arXiv},
+    primaryClass={cs.LG},
+    url={https://arxiv.org/abs/2407.07852}, 
+}
+```
