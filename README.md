@@ -76,9 +76,7 @@ This initial peer must be reachable from all machines participating in the distr
 On the machine chosen as the initial peer, run:
 
 ```bash
-python ../hivemind_source/hivemind/hivemind_cli/run_dht.py \
-    --identity_path fixed_private_key.pem \
-    --host_maddrs /ip4/0.0.0.0/tcp/30001
+hivemind-dht     --identity_path fixed_private_key.pem     --host_maddrs /ip4/0.0.0.0/tcp/30001
 ```
 
 You should receive an output similar to this:
