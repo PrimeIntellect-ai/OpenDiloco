@@ -97,7 +97,9 @@ class HvConfig(BaseConfig):
     announce_maddrs: list[str] | None = None
     matchmaking_time: float | None = None
     averaging_timeout: float | None = None
-    hivemind_compression: Literal["none", "fp16", "scaled-fp16"] = "none"
+    hivemind_compression: Literal["none", "fp16", "scaled-fp16", "uniform8bit", "quantile8bit", "blockwise8bit"] = (
+        "none"
+    )
     all_reduce_strategy: AllReduceStrategy = AllReduceStrategy.WAIT_FOR_ALL
     timeout_waiting_for_peers: float | None = None
     skip_load_from_peers: bool = False

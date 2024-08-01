@@ -108,10 +108,24 @@ def get_compression_kwargs(hivemind_compression: str) -> dict:
 
         ret_kwargs["grad_compression"] = NoCompression()
         ret_kwargs["state_averaging_compression"] = NoCompression()
+    elif hivemind_compression == "uniform8bit":
+        from hivemind import Uniform8BitQuantization
+
+        ret_kwargs["grad_compression"] = Uniform8BitQuantization()
+        ret_kwargs["state_averaging_compression"] = Uniform8BitQuantization()
+    elif hivemind_compression == "quantile8bit":
+        from hivemind import Quantile8BitQuantization
+
+        ret_kwargs["grad_compression"] = Quantile8BitQuantization()
+        ret_kwargs["state_averaging_compression"] = Quantile8BitQuantization()
+
+    elif hivemind_compression == "blockwise8bit":
+        from hivemind import BlockwiseQuantization
+
+        ret_kwargs["grad_compression"] = BlockwiseQuantization()
+        ret_kwargs["state_averaging_compression"] = BlockwiseQuantization()
     else:
-        raise ValueError(
-            f"Invalid hivemind_compression: {hivemind_compression}. Please choose 'none', 'fp16', or 'scaled-fp16'."
-        )
+        raise ValueError(f"Invalid hivemind_compression: {hivemind_compression}")
     return ret_kwargs
 
 
