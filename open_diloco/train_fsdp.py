@@ -104,6 +104,8 @@ class HvConfig(BaseConfig):
     galaxy_size: int
     fail_rank_drop: bool = False  # fail if we lose a diloco worker
     warmup_outerstep: int = 10
+    outer_lr_min: float = 0.3
+    outer_scheduler: bool = False
 
     @model_validator(mode="before")
     def cast_str_to_list(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -193,16 +195,11 @@ def _get_cosine_schedule_with_warmup_lr_lambda(
     *,
     num_warmup_steps: int,
     num_training_steps: int,
-    num_inner_steps: int,
-    warmup_outerstep: int | None,
     num_cycles: float,
     min_lr_rate: float = 0.0,
 ):
     if current_step < num_warmup_steps:
         return float(current_step) / float(max(1, num_warmup_steps))
-
-    if warmup_outerstep is not None and current_step % num_inner_steps < warmup_outerstep:
-        return 0
 
     progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
     factor = 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
@@ -215,9 +212,32 @@ def get_cosine_schedule_with_warmup(optimizer, config: Config):
         _get_cosine_schedule_with_warmup_lr_lambda,
         num_warmup_steps=config.warmup_steps,
         num_training_steps=config.total_steps,
-        num_inner_steps=config.hv.local_steps,
-        warmup_outerstep=config.hv.warmup_outerstep,
         num_cycles=0.5,
+    )
+    return LambdaLR(optimizer, lambda_lr, -1)
+
+
+def _get_lr_outer(
+    current_step: int,
+    *,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    min_lr_rate: float = 0.0,
+):
+    if current_step < num_warmup_steps:
+        return 1
+
+    progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+    factor = 0.5 * (1.0 + math.cos(math.pi * 2.0 * progress))
+    factor = factor * (1 - min_lr_rate) + min_lr_rate
+    return max(0, factor)
+
+
+def get_lr_outer(optimizer, config: Config):
+    lambda_lr = partial(
+        _get_lr_outer,
+        num_warmup_steps=config.warmup_steps,
+        num_training_steps=config.total_steps,
     )
     return LambdaLR(optimizer, lambda_lr, -1)
 
@@ -312,6 +332,9 @@ def train(config: Config):
             config=config,
         )
 
+    def outer_scheduler_fn(opt):
+        return get_lr_outer(opt, config=config)
+
     if config.hv is not None:
         if config.resume_from_checkpoint:
             # We need to load with a fake optimizer to set the model parameters correctly before initializing the DiLoCoOptimizer
@@ -337,6 +360,7 @@ def train(config: Config):
             outer_optimizer=outer_optimizer,
             inner_optimizer=inner_optimizer,
             scheduler=None,
+            outer_scheduler=outer_scheduler_fn if config.hv.outer_scheduler else None,
             params=model.parameters(),
             delay_optimizer_step=False,
             delay_grad_averaging=False,
@@ -452,6 +476,7 @@ def train(config: Config):
             scaler.update()
 
             scheduler.step()
+
             optimizer.zero_grad()
 
             if logging_activations_steps:
