@@ -191,7 +191,11 @@ def _get_cosine_schedule_with_warmup_lr_lambda(
     num_cycles: float,
     min_lr_rate: float = 0.0,
 ):
-    if warmup_outerstep is not None and current_step % num_inner_steps < warmup_outerstep:
+    if (
+        warmup_outerstep is not None
+        and current_step > num_warmup_steps
+        and current_step % num_inner_steps < warmup_outerstep
+    ):
         return 0
 
     if current_step < num_warmup_steps:
