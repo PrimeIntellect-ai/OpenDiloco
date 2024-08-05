@@ -406,7 +406,7 @@ class DiLoCoOptimizer(Optimizer):
         )
         self.diloco_grad_averager = self._make_gradient_averager(compression=grad_compression)
 
-        self.outer_scheduler = outer_scheduler(self.state_averager.optimizer)
+        self.outer_scheduler = outer_scheduler(self.state_averager.optimizer) if outer_scheduler else None
 
     def _check_kwargs(self, kwargs) -> None:
         """DiLoCo Optimizer only support a subset of Hivemind Optimizer kwargs.
