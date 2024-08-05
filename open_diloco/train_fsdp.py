@@ -224,7 +224,8 @@ def get_lr_outer(optimizer, config: Config):
     lambda_lr = partial(
         _get_lr_outer,
         num_warmup_steps=config.warmup_steps,
-        num_training_steps=config.total_steps,
+        # num_training_steps=config.total_steps,
+        num_training_steps=config.total_steps / 4,
     )
     return LambdaLR(optimizer, lambda_lr, -1)
 
