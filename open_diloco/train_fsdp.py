@@ -209,13 +209,14 @@ def _get_lr_outer(
     *,
     num_warmup_steps: int,
     num_training_steps: int,
+    num_cycles: float,
     min_lr_rate: float = 0.0,
 ):
     if current_step < num_warmup_steps:
         return 1
 
     progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-    factor = 0.5 * (1.0 + math.cos(math.pi * 2.0 * progress))
+    factor = 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
     factor = factor * (1 - min_lr_rate) + min_lr_rate
     return max(0, factor)
 
@@ -226,6 +227,7 @@ def get_lr_outer(optimizer, config: Config):
         num_warmup_steps=config.warmup_steps,
         # num_training_steps=config.total_steps,
         num_training_steps=config.total_steps / 4,
+        num_cycles=0.5,
     )
     return LambdaLR(optimizer, lambda_lr, -1)
 
