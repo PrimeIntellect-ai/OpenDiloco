@@ -90,10 +90,17 @@ def hash_tensor_content(a: torch.Tensor, max_size: int = 1000) -> str:
     return hashlib.md5(_round_flatten(a, max_size=max_size).encode("utf-8")).hexdigest()
 
 
-def get_compression_kwargs(hivemind_compression: str) -> dict:
+def get_compression_kwargs(hivemind_compression: str | None) -> dict:
     """Return the compression kwargs for hivemind optimizer based on the hivemind_compression argument."""
     ret_kwargs = {}
-    if hivemind_compression == "fp16":
+
+    if hivemind_compression is None:
+        from hivemind import NoCompression
+
+        ret_kwargs["grad_compression"] = NoCompression()
+        ret_kwargs["state_averaging_compression"] = NoCompression()
+
+    elif hivemind_compression == "fp16":
         from hivemind import Float16Compression
 
         ret_kwargs["grad_compression"] = Float16Compression()
@@ -103,11 +110,6 @@ def get_compression_kwargs(hivemind_compression: str) -> dict:
 
         ret_kwargs["grad_compression"] = ScaledFloat16Compression()
         ret_kwargs["state_averaging_compression"] = ScaledFloat16Compression()
-    elif hivemind_compression == "none":
-        from hivemind import NoCompression
-
-        ret_kwargs["grad_compression"] = NoCompression()
-        ret_kwargs["state_averaging_compression"] = NoCompression()
     elif hivemind_compression == "uniform8bit":
         from hivemind import Uniform8BitQuantization
 
