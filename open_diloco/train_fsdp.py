@@ -231,7 +231,7 @@ def get_lr_outer(optimizer, config: Config):
         _get_lr_outer,
         num_warmup_steps=config.warmup_steps,
         # num_training_steps=config.total_steps,
-        num_training_steps=config.total_steps / 4,
+        num_training_steps=config.total_steps / 10,
         num_cycles=0.5,
     )
     return LambdaLR(optimizer, lambda_lr, -1)
