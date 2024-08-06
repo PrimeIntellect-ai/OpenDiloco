@@ -1,0 +1,10 @@
+{
+    "name": "llama7b",
+    "n_embd": 4096,
+    "intermediate_size": 11008,
+    "n_head": 32,
+    "n_layer": 32,
+    "n_query_groups": null,
+    "vocab_size": 32000,
+    "block_size": 1024
+}
