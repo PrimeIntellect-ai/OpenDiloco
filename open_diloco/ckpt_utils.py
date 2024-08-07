@@ -36,12 +36,17 @@ def save_checkpoint(
     # 1. Save distributed states
     fs_storage_writer = dcp.FsspecWriter(checkpoint_path, sync_files=False)
     # for some reason sync_files = True try to call stream.fileno which is not supported with gcp ffspec storage.
+    
+    if outer_optimizer is not None:
+        model_state_dict, optimizer_state_dict = get_state_dict(model, optimizer)
+    else:
+        model_state_dict, optimizer_state_dict = get_state_dict(model, [optimizer, outer_optimizer])
 
-    model_state_dict, optimizer_state_dict = get_state_dict(model, optimizer)
     dcp_state_dict = {
         "model": model_state_dict,
         "optimizer": optimizer_state_dict,
     }
+
     dcp.save(dcp_state_dict, storage_writer=fs_storage_writer)
     if data_loader is not None:
         rank_state_dict = {}
@@ -54,8 +59,6 @@ def save_checkpoint(
 
     # 2. Save global states
     global_state_dict = {"scheduler": scheduler.state_dict(), "loss": loss if loss is not None else 0}
-    if outer_optimizer is not None:
-        global_state_dict["outer_optimizer"] = outer_optimizer.state_dict()
     if scaler is not None:
         global_state_dict["scaler"] = scaler.state_dict()
 
@@ -89,18 +92,32 @@ def load_checkpoint(
     # 1. Load distributed states
     fs_storage_reader = dcp.FsspecReader(checkpoint_path)
 
-    model_state_dict, optimizer_state_dict = get_state_dict(model, optimizer)
+    optimizers = [optimizer] 
+    if outer_optimizer is not None:
+        optimizers.append(outer_optimizer)
+
+    model_state_dict, optimizers_state_dict = get_state_dict(model, optimizers)
+
     dcp_state_dict = {
         "model": model_state_dict,
-        "optimizer": optimizer_state_dict,
+        "optimizers": optimizers_state_dict,
     }
     dcp.load(dcp_state_dict, storage_reader=fs_storage_reader)
-    set_state_dict(
-        model,
+
+    if outer_optimizer is not None:
+        set_state_dict(
+            model,
         optimizer,
         model_state_dict=model_state_dict,
-        optim_state_dict=optimizer_state_dict,
-    )
+        optim_state_dict=optimizers_state_dict,
+        )
+    else:
+        set_state_dict(
+            model,
+            [optimizer, outer_optimizer],
+            model_state_dict=model_state_dict,
+            optim_state_dict=optimizers_state_dict,
+        )
     if data_loader is not None:
         with fsspec.open(os.path.join(checkpoint_path, f"__{rank}_0.pt"), "rb") as f:
             rank_state_dict = torch.load(f)
