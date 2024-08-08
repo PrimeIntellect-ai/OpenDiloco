@@ -558,6 +558,7 @@ def train(config: Config):
                             model=model,
                             optimizer=optimizer.inner_optimizer,
                             scheduler=scheduler,
+                            outer_scheduler=optimizer.outer_scheduler,
                             outer_optimizer=optimizer.state_averager.optimizer,
                             loss=loss_batch.item(),
                             scaler=scaler,
