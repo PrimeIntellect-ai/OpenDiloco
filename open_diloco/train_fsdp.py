@@ -101,6 +101,7 @@ class HvConfig(BaseConfig):
     skip_load_from_peers: bool = False
     world_rank: int
     galaxy_size: int
+    fail_rank_drop: bool = False  # fail if we lose a diloco worker
 
     @model_validator(mode="before")
     def cast_str_to_list(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -368,6 +369,9 @@ def train(config: Config):
 
     loss_batch = 0
 
+    if world_messenger_hv:
+        max_num_peers = 0
+
     for step, batch in enumerate(iterable=train_dataloader, start=start_step * gradient_accumulation_steps):
         real_step = (step + 1) // gradient_accumulation_steps
         is_accumulating = bool((step + 1) % gradient_accumulation_steps)
@@ -447,6 +451,9 @@ def train(config: Config):
                 if world_messenger_hv:
                     outer_lr = [group["lr"] for group in optimizer.state_averager.optimizer.param_groups][0]
                     num_peers = optimizer.tracker.global_progress.num_peers
+
+                    max_num_peers = max(max_num_peers, num_peers)
+
                     if num_peers == 0:
                         num_peers = 1
 
@@ -455,6 +462,13 @@ def train(config: Config):
 
                 if logging_activations_steps:
                     metrics.update(activation_monitor.log_activations)
+
+                if world_messenger_hv and num_peers < max_num_peers:
+                    log(message=f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}")
+                    if config.hv.fail_rank_drop:
+                        raise ValueError(
+                            f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}"
+                        )
 
                 current_time = time.time()
 
