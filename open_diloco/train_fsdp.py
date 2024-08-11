@@ -70,8 +70,13 @@ def log(message):
     logger.info(f"[rank {os.environ['LOCAL_RANK']}] {message}")
 
 
-def check_checkpoint_path_access(checkpoint_path: str, rank: int):
-    dummy_file_path = os.path.join(checkpoint_path, f"dummy_file_{rank}.txt")
+def check_checkpoint_path_access(checkpoint_path: str, rank: int, world_rank_hv: int | None = None):
+    if world_rank_hv:
+        dummy_file_path = os.path.join(
+            checkpoint_path, get_diloco_rank_dir_name(world_rank_hv), f"dummy_file_{rank}.txt"
+        )
+    else:
+        dummy_file_path = os.path.join(checkpoint_path, f"dummy_file_{rank}.txt")
     with fsspec.open(dummy_file_path, "w") as f:
         f.write("This is a dummy file for testing access.")
     gfs = GenericFileSystem()
@@ -98,6 +103,7 @@ class HvConfig(BaseConfig):
     galaxy_size: int
     outer_lr_min: float = 0.3
     outer_scheduler: bool = False
+    fail_rank_drop: bool = False  # fail if we lose a diloco worker
 
     @model_validator(mode="before")
     def cast_str_to_list(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -278,7 +284,7 @@ def train(config: Config):
         log_visible_maddrs(dht.get_visible_maddrs(), only_p2p=False)
 
     if local_rank == 0:
-        check_checkpoint_path_access(config.checkpoint_path, rank)
+        check_checkpoint_path_access(config.checkpoint_path, rank, config.hv.world_rank if config.hv else None)
 
     # DataLoader preparation
     tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
@@ -424,6 +430,9 @@ def train(config: Config):
 
     loss_batch = 0
 
+    if world_messenger_hv:
+        max_num_peers = 0
+
     for step, batch in enumerate(iterable=train_dataloader, start=start_step * gradient_accumulation_steps):
         real_step = (step + 1) // gradient_accumulation_steps
         is_accumulating = bool((step + 1) % gradient_accumulation_steps)
@@ -504,6 +513,9 @@ def train(config: Config):
                 if world_messenger_hv:
                     outer_lr = [group["lr"] for group in optimizer.state_averager.optimizer.param_groups][0]
                     num_peers = optimizer.tracker.global_progress.num_peers
+
+                    max_num_peers = max(max_num_peers, num_peers)
+
                     if num_peers == 0:
                         num_peers = 1
 
@@ -512,6 +524,13 @@ def train(config: Config):
 
                 if logging_activations_steps:
                     metrics.update(activation_monitor.log_activations)
+
+                if num_peers < max_num_peers:
+                    log(message=f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}")
+                    if config.hv.fail_rank_drop:
+                        raise ValueError(
+                            f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}"
+                        )
 
                 current_time = time.time()
 

@@ -127,7 +127,7 @@ torchrun --nproc_per_node=8 \
 ## 150m on 8 DiLoCo Worker with 500 local steps
 In the `open_diloco` folder, run:
 ```bash
-./run_training.sh 8 $PEER \
+./run_training.sh 8 1 $PEER \
     --sharding-strategy NO_SHARD \
     --per-device-train-batch-size 8 \
     --precision bf16-mixed \
@@ -149,7 +149,7 @@ under the hood the `run_training.sh` script calls `train_fsdp.py` 8 times with t
 ## 150m on 8 DiLoCo Worker with 50 local steps
 In the `open_diloco` folder, run:
 ```bash
-./run_training.sh 8 $PEER \
+./run_training.sh 8 1 $PEER \
     --sharding-strategy NO_SHARD \
     --per-device-train-batch-size 8 \
     --total-batch-size 512 \
