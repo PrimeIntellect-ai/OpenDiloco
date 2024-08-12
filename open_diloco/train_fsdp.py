@@ -228,7 +228,7 @@ def _get_lr_outer(
         return 1
 
     progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-    factor = 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
+    factor = 1 - math.tanh(2 * progress)
     factor = factor * (1 - min_lr_rate) + min_lr_rate
     return max(0, factor)
 
