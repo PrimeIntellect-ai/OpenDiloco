@@ -77,6 +77,7 @@ def check_checkpoint_path_access(checkpoint_path: str, rank: int, world_rank_hv:
         )
     else:
         dummy_file_path = os.path.join(checkpoint_path, f"dummy_file_{rank}.txt")
+
     with fsspec.open(dummy_file_path, "w") as f:
         f.write("This is a dummy file for testing access.")
     gfs = GenericFileSystem()
@@ -546,11 +547,14 @@ def train(config: Config):
                 log(f"saving at step {real_step}, step {step+1}")
                 ckpt_path = os.path.join(config.checkpoint_path, f"model_step_{int(real_step)}")
 
+                if config.hv:
+                    ckpt_path = os.path.join(ckpt_path, get_diloco_rank_dir_name(config.hv.world_rank))
+
                 if world_messenger_hv:
                     assert isinstance(optimizer, DiLoCoOptimizer)
                     with optimizer.tracker.pause_updates():
                         save_checkpoint(
-                            checkpoint_path=os.path.join(ckpt_path, get_diloco_rank_dir_name(config.hv.world_rank)),
+                            checkpoint_path=ckpt_path,
                             model=model,
                             optimizer=optimizer.inner_optimizer,
                             scheduler=scheduler,
