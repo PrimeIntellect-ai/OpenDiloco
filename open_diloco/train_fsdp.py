@@ -92,7 +92,6 @@ class HvConfig(BaseConfig):
     galaxy_size: int
     fail_rank_drop: bool = False  # fail if we lose a diloco worker
     warmup_outerstep: int = 10
-    outer_lr_min: float = 0.3
     outer_scheduler: bool = False
 
     @model_validator(mode="before")
