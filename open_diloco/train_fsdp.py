@@ -163,9 +163,9 @@ def get_dataloader(
             )
             return outputs
 
-        tokenized_datasets = ds.map(tokenize_function, batched=True, remove_columns=["text", "timestamp", "url"])[
-            "train"
-        ]
+        tokenized_datasets = ds.map(
+            tokenize_function, batched=True, remove_columns=["text", "timestamp", "url", "attention_mask"]
+        )["train"]
 
         if config.hv is not None:
             train_dataset = split_dataset_by_node(
@@ -398,8 +398,8 @@ def train(config: Config):
             batch[key] = batch[key].to("cuda")
 
         with model.no_sync() if is_accumulating else nullcontext():
-            # log(batch.keys())
-            # log(f"input_ids shape: {batch['input_ids'].shape}")
+            log(batch.keys())
+            log(f"input_ids shape: {batch['input_ids'].shape}")
 
             logits = model(input_ids=batch["input_ids"]).logits.contiguous()
             labels = batch["labels"].contiguous()
