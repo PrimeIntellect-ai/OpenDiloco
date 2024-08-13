@@ -26,7 +26,7 @@ from torch.distributed import destroy_process_group, init_process_group
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoTokenizer,
-    DataCollatorForLanguageModeling,
+    LlamaTokenizer,
     LlamaConfig,
     LlamaForCausalLM,
     get_cosine_schedule_with_warmup,
@@ -50,6 +50,7 @@ from hivemind.optim.optimizer import logger
 from open_diloco.utils import (
     ActivationNormMetric,
     FakeTokenizedDataset,
+    collate_causal_mask,
     get_compression_kwargs,
     get_sharding_strategy,
 )
@@ -142,7 +143,9 @@ class Config(BaseConfig):
     max_steps: int | None = None
 
 
-def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> StatefulDataLoader:
+def get_dataloader(
+    tokenizer: LlamaTokenizer, world_size: int, rank: int, local_rank: int, config: Config
+) -> StatefulDataLoader:
     if config.fake_data:
         train_dataset = FakeTokenizedDataset(config.seq_length, TEST_VOCAB_SIZE)
     else:
@@ -171,7 +174,7 @@ def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> S
         else:
             train_dataset = split_dataset_by_node(tokenized_datasets, world_size=world_size, rank=rank)
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = collate_causal_mask(config.seq_length, tokenizer.pad_token_id, ignore_index=-100)
 
     return StatefulDataLoader(
         train_dataset,
@@ -392,6 +395,9 @@ def train(config: Config):
             batch[key] = batch[key].to("cuda")
 
         with model.no_sync() if is_accumulating else nullcontext():
+            # log(batch.keys())
+            # log(f"input_ids shape: {batch['input_ids'].shape}")
+
             outputs = model(**batch)
             loss = outputs.loss / gradient_accumulation_steps
 
