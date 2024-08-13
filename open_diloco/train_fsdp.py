@@ -12,6 +12,7 @@ import time
 from contextlib import nullcontext
 import datetime
 from typing import Any, Literal
+from einops import rearrange
 
 import fsspec
 from pydantic import model_validator
@@ -22,6 +23,8 @@ from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from fsspec.generic import GenericFileSystem
 from torch.distributed import destroy_process_group, init_process_group
+import torch.nn.functional as F
+
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
@@ -398,8 +401,13 @@ def train(config: Config):
             # log(batch.keys())
             # log(f"input_ids shape: {batch['input_ids'].shape}")
 
-            outputs = model(**batch)
-            loss = outputs.loss / gradient_accumulation_steps
+            logits = model(input_ids=batch["input_ids"]).logits.contiguous()
+            labels = batch["labels"].contiguous()
+
+            flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
+            flatten_labels = rearrange(labels, "b seq -> (b seq)")
+
+            loss = F.cross_entropy(flatten_logits, flatten_labels, ignore_index=-100) / gradient_accumulation_steps
 
             loss_batch += loss.detach()
 

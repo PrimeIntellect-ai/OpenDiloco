@@ -187,11 +187,14 @@ def _collate_fn_causal_mask(
 
     batched = {"input_ids": [], "labels": []}
 
+    if max_seq_length > 0:
+        max_seq_length += 1  # this makes sure that the effective seqlen is correct
+
     for sample in samples:
         input_ids = torch.Tensor(sample["input_ids"]).long()
 
         if len(input_ids) < max_seq_length:
-            input_ids = torch.cat([input_ids, torch.full((max_seq_length - len(input_ids)), pad_id)])
+            input_ids = torch.cat([input_ids, torch.full((max_seq_length - len(input_ids),), pad_id)])
         elif len(input_ids) > max_seq_length:
             input_ids = input_ids[:max_seq_length]
 
