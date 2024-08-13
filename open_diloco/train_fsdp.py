@@ -7,11 +7,13 @@ torchrun --nproc_per_node=2 \
 """
 
 from functools import partial
+import json
 import os
 import time
 from contextlib import nullcontext
 import datetime
 from typing import Any, Literal
+from einops import rearrange
 
 import fsspec
 from pydantic import model_validator
@@ -27,8 +29,6 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoTokenizer,
     DataCollatorForLanguageModeling,
-    LlamaConfig,
-    LlamaForCausalLM,
     get_cosine_schedule_with_warmup,
 )
 from torch.distributed.fsdp import (
@@ -40,7 +40,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed import broadcast_object_list
 from open_diloco.ckpt_utils import load_checkpoint, save_checkpoint
 from open_diloco.hivemind_diloco import AllReduceStrategy, DiLoCoOptimizer
-
+from open_diloco.llama import GPT, Config as ModelConfig
 
 from hivemind.dht.dht import DHT
 from hivemind.utils.networking import log_visible_maddrs
@@ -114,9 +114,9 @@ class HvConfig(BaseConfig):
 
 
 class Config(BaseConfig):
-    path_model: str = "PrimeIntellect/llama-150m-fresh"
+    llama_config: str | ModelConfig = "open_diloco/configs/config_1b.json"
     torch_compile: bool = True
-    attn_implementation: str = "sdpa"
+    attention_impl: Literal["sdpa", "fa", "xformers"] = "sdpa"
     # Data
     dataset_name_or_path: str = "allenai/c4"
     seq_length: int = 1024
@@ -181,10 +181,16 @@ def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> S
     )
 
 
-def get_model(config: Config) -> LlamaForCausalLM:
+def get_model(config: Config) -> GPT:
     # Load model
-    config_model = LlamaConfig.from_pretrained(config.path_model, attn_implementation=config.attn_implementation)
-    return LlamaForCausalLM.from_pretrained(pretrained_model_name_or_path=config.path_model, config=config_model)
+    if isinstance(config.llama_config, ModelConfig):
+        llama_config = config.llama_config
+    else:
+        with open(config.llama_config) as f:
+            llama_config = ModelConfig(**json.load(f))
+
+    llama_config.attention_impl = config.attention_impl
+    return GPT(llama_config)
 
 
 def train(config: Config):
@@ -392,9 +398,18 @@ def train(config: Config):
             batch[key] = batch[key].to("cuda")
 
         with model.no_sync() if is_accumulating else nullcontext():
-            outputs = model(**batch)
-            loss = outputs.loss / gradient_accumulation_steps
+            inputs_ids = batch["input_ids"]
 
+            input_ids = inputs_ids[:, :-1]
+            target = inputs_ids[:, 1:]
+
+            output = model(input_ids)
+
+            flatten_logits = rearrange(output, "b seq vocab -> (b seq) vocab")
+            flatten_target = rearrange(target, "b seq -> (b seq)")
+
+            loss = torch.nn.functional.cross_entropy(flatten_logits, flatten_target)
+            loss = loss / gradient_accumulation_steps
             loss_batch += loss.detach()
 
             scaler.scale(loss).backward()
