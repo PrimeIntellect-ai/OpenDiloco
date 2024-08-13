@@ -57,6 +57,7 @@ from open_diloco.utils import (
     get_compression_kwargs,
     get_sharding_strategy,
 )
+from open_diloco.model import ModelArgs, TransformerHF
 
 
 TIMEOUT_NCCL_MINUTES = os.environ.get("TIMEOUT_NCCL_MINUTES", 120)
@@ -119,6 +120,7 @@ class HvConfig(BaseConfig):
 
 class Config(BaseConfig):
     path_model: str = "PrimeIntellect/llama-150m-fresh"
+    torch_titan_llama: bool = False
     torch_compile: bool = True
     attn_implementation: str = "sdpa"
     # Data
@@ -189,8 +191,12 @@ def get_dataloader(
 
 def get_model(config: Config) -> LlamaForCausalLM:
     # Load model
-    config_model = LlamaConfig.from_pretrained(config.path_model, attn_implementation=config.attn_implementation)
-    return LlamaForCausalLM.from_pretrained(pretrained_model_name_or_path=config.path_model, config=config_model)
+    if config.torch_titan_llama:
+        config_model = ModelArgs.from_name(config.path_model)
+        return TransformerHF(config=config_model)
+    else:
+        config_model = LlamaConfig.from_pretrained(config.path_model, attn_implementation=config.attn_implementation)
+        return LlamaForCausalLM.from_pretrained(pretrained_model_name_or_path=config.path_model, config=config_model)
 
 
 def train(config: Config):
@@ -398,9 +404,6 @@ def train(config: Config):
             batch[key] = batch[key].to("cuda")
 
         with model.no_sync() if is_accumulating else nullcontext():
-            log(batch.keys())
-            log(f"input_ids shape: {batch['input_ids'].shape}")
-
             logits = model(input_ids=batch["input_ids"]).logits.contiguous()
             labels = batch["labels"].contiguous()
 
