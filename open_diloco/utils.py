@@ -173,5 +173,32 @@ class FakeTokenizedDataset(IterableDataset):
     def __iter__(self) -> Generator[dict[str, Any], Any, None]:
         while True:
             input_ids = torch.randint(3, self.vocab_size, (self.seq_len,)).tolist()
-            attention_mask = [1] * self.seq_len
-            yield {"input_ids": input_ids, "attention_mask": attention_mask}
+            yield {"input_ids": input_ids}
+
+
+def collate_causal_mask(max_seq_length: int = -1, pad_id: int = 0, ignore_index: int = -100) -> callable:
+    return partial(_collate_fn_causal_mask, max_seq_length=max_seq_length, pad_id=pad_id, ignore_index=ignore_index)
+
+
+def _collate_fn_causal_mask(
+    samples: list[dict[str, torch.LongTensor]], max_seq_length: int = -1, pad_id: int = 0, ignore_index: int = -100
+) -> dict[str, torch.LongTensor]:
+    assert samples[0].keys() == {"input_ids"}
+
+    batched = {"input_ids": [], "labels": []}
+
+    if max_seq_length > 0:
+        max_seq_length += 1  # this makes sure that the effective seqlen is correct
+
+    for sample in samples:
+        input_ids = torch.Tensor(sample["input_ids"]).long()
+
+        if len(input_ids) < max_seq_length:
+            input_ids = torch.cat([input_ids, torch.full((max_seq_length - len(input_ids),), pad_id)])
+        elif len(input_ids) > max_seq_length:
+            input_ids = input_ids[:max_seq_length]
+
+        batched["input_ids"].append(input_ids[1:])
+        batched["labels"].append(input_ids[:-1])
+
+    return {"input_ids": torch.stack(batched["input_ids"], dim=0), "labels": torch.stack(batched["labels"], dim=0)}

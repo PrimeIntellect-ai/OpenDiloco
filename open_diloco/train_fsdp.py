@@ -12,6 +12,7 @@ import time
 from contextlib import nullcontext
 import datetime
 from typing import Any, Literal
+from einops import rearrange
 
 import fsspec
 from pydantic import model_validator
@@ -22,11 +23,13 @@ from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from fsspec.generic import GenericFileSystem
 from torch.distributed import destroy_process_group, init_process_group
+import torch.nn.functional as F
+
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoTokenizer,
-    DataCollatorForLanguageModeling,
+    LlamaTokenizer,
     LlamaConfig,
     LlamaForCausalLM,
     get_cosine_schedule_with_warmup,
@@ -50,9 +53,11 @@ from hivemind.optim.optimizer import logger
 from open_diloco.utils import (
     ActivationNormMetric,
     FakeTokenizedDataset,
+    collate_causal_mask,
     get_compression_kwargs,
     get_sharding_strategy,
 )
+from open_diloco.model import ModelArgs, TransformerHF
 
 
 TIMEOUT_NCCL_MINUTES = os.environ.get("TIMEOUT_NCCL_MINUTES", 120)
@@ -115,6 +120,7 @@ class HvConfig(BaseConfig):
 
 class Config(BaseConfig):
     path_model: str = "PrimeIntellect/llama-150m-fresh"
+    torch_titan_llama: bool = False
     torch_compile: bool = True
     attn_implementation: str = "sdpa"
     # Data
@@ -142,7 +148,9 @@ class Config(BaseConfig):
     max_steps: int | None = None
 
 
-def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> StatefulDataLoader:
+def get_dataloader(
+    tokenizer: LlamaTokenizer, world_size: int, rank: int, local_rank: int, config: Config
+) -> StatefulDataLoader:
     if config.fake_data:
         train_dataset = FakeTokenizedDataset(config.seq_length, TEST_VOCAB_SIZE)
     else:
@@ -157,9 +165,9 @@ def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> S
             )
             return outputs
 
-        tokenized_datasets = ds.map(tokenize_function, batched=True, remove_columns=["text", "timestamp", "url"])[
-            "train"
-        ]
+        tokenized_datasets = ds.map(
+            tokenize_function, batched=True, remove_columns=["text", "timestamp", "url", "attention_mask"]
+        )["train"]
 
         if config.hv is not None:
             train_dataset = split_dataset_by_node(
@@ -171,7 +179,7 @@ def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> S
         else:
             train_dataset = split_dataset_by_node(tokenized_datasets, world_size=world_size, rank=rank)
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = collate_causal_mask(config.seq_length, tokenizer.pad_token_id, ignore_index=-100)
 
     return StatefulDataLoader(
         train_dataset,
@@ -183,8 +191,12 @@ def get_dataloader(tokenizer, world_size, rank, local_rank, config: Config) -> S
 
 def get_model(config: Config) -> LlamaForCausalLM:
     # Load model
-    config_model = LlamaConfig.from_pretrained(config.path_model, attn_implementation=config.attn_implementation)
-    return LlamaForCausalLM.from_pretrained(pretrained_model_name_or_path=config.path_model, config=config_model)
+    if config.torch_titan_llama:
+        config_model = ModelArgs.from_name(config.path_model)
+        return TransformerHF(config=config_model)
+    else:
+        config_model = LlamaConfig.from_pretrained(config.path_model, attn_implementation=config.attn_implementation)
+        return LlamaForCausalLM.from_pretrained(pretrained_model_name_or_path=config.path_model, config=config_model)
 
 
 def train(config: Config):
@@ -392,8 +404,13 @@ def train(config: Config):
             batch[key] = batch[key].to("cuda")
 
         with model.no_sync() if is_accumulating else nullcontext():
-            outputs = model(**batch)
-            loss = outputs.loss / gradient_accumulation_steps
+            logits = model(input_ids=batch["input_ids"]).logits.contiguous()
+            labels = batch["labels"].contiguous()
+
+            flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
+            flatten_labels = rearrange(labels, "b seq -> (b seq)")
+
+            loss = F.cross_entropy(flatten_logits, flatten_labels, ignore_index=-100) / gradient_accumulation_steps
 
             loss_batch += loss.detach()
 
