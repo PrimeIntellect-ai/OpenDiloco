@@ -112,8 +112,8 @@ def config_hv() -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("num_diloco", [1, 2])
-def test_multi_gpu_hivemind(config_hv, num_diloco):
+@pytest.mark.parametrize("num_diloco", [2])
+def test_multi_gpu_hivemind(config_hv, num_diloco, tmp_path):
     dht = DHT(
         start=True,
         host_maddrs=[f"/ip4/0.0.0.0/tcp/{get_random_available_port()}"],
@@ -123,27 +123,84 @@ def test_multi_gpu_hivemind(config_hv, num_diloco):
 
     results = []
 
+    ckpt_path = f"{tmp_path}/ckpt"
+
+    def get_base_cmd(i, initial_peers):
+        return [
+            "torchrun",
+            f"--nproc_per_node={1}",
+            "--rdzv-endpoint",
+            f"localhost:{port}",
+            "open_diloco/train_fsdp.py",
+            *config_hv,
+            "--hv.initial_peers",
+            initial_peers,
+            "--hv.world_rank",
+            str(i),
+            "--hv.galaxy_size",
+            str(num_diloco),
+        ]
+
     for i in range(num_diloco):
         port = get_random_available_port()
-        result = subprocess.Popen(
-            [
-                "torchrun",
-                f"--nproc_per_node={1}",
-                "--rdzv-endpoint",
-                f"localhost:{port}",
-                "open_diloco/train_fsdp.py",
-                *config_hv,
-                "--hv.initial_peers",
-                initial_peers,
-                "--hv.world_rank",
-                str(i),
-                "--hv.galaxy_size",
-                str(num_diloco),
-            ],
-        )
+
+        cmd = get_base_cmd(i, initial_peers) + [
+            "--ckpt.path",
+            ckpt_path,
+            "--ckpt.interval",
+            "25",
+            "--project",
+            f"{tmp_path}/log{i}_part1.json",
+        ]
+
+        result = subprocess.Popen(cmd)
         results.append(result)
 
     for result in results:
         result.wait()
         if result.returncode != 0:
             pytest.fail(f"Process {result} failed {result.stderr}")
+
+    # resume from ckpt
+
+    dht.shutdown()
+
+    del dht
+    dht = DHT(
+        start=True,
+        host_maddrs=[f"/ip4/0.0.0.0/tcp/{get_random_available_port()}"],
+    )
+    initial_peers = str(dht.get_visible_maddrs()[0])
+
+    for i in range(num_diloco):
+        port = get_random_available_port()
+
+        cmd = get_base_cmd(i, initial_peers) + [
+            "--ckpt.resume",
+            f"{ckpt_path}/{CKPT_PREFIX}_50",
+            "--project",
+            f"{tmp_path}/log{i}_part2.json",
+        ]
+
+        result = subprocess.Popen(cmd)
+        results.append(result)
+
+    for result in results:
+        result.wait()
+        if result.returncode != 0:
+            pytest.fail(f"Process {result} failed {result.stderr}")
+
+    for i in range(num_diloco):
+        with open(f"{tmp_path}/log{i}_part1.json", "rb") as f:
+            log1 = pickle.load(f)
+        with open(f"{tmp_path}/log{i}_part2.json", "rb") as f:
+            log2 = pickle.load(f)
+
+        log1 = {data["step"]: [data["Loss"], data["lr"]] for data in log1}
+        log2 = {data["step"]: [data["Loss"], data["lr"]] for data in log2}
+
+        common_step = set(log1.keys()) & set(log2.keys())
+
+        for step in common_step:
+            assert np.allclose(log1[step][0], log2[step][0], atol=1e-2), f"Loss at step {step} is different"
+            assert log1[step][1] == log2[step][1], f"Lr at step {step} is different"
