@@ -58,6 +58,7 @@ from open_diloco.utils import (
 TIMEOUT_NCCL_MINUTES = os.environ.get("TIMEOUT_NCCL_MINUTES", 120)
 TARGET_LAYER_ACTIVATIONS = ["self_attn", "lm_head"]
 TEST_VOCAB_SIZE = 1024
+CKPT_PREFIX = "model_step"
 
 
 # Function to initialize the distributed process group
@@ -114,9 +115,34 @@ class HvConfig(BaseConfig):
 
 
 class CkptConfig(BaseConfig):
-    resume: str | None = None
+    resume: str | bool | None = None  # if resume is a boolean, it means we should resume from the last checkpoint
     interval: int | None = None
     path: str = "outputs"
+
+    def get_resume_path(self):
+        if self.resume is None:
+            raise ValueError("Resume path is not set")
+        elif isinstance(self.resume, bool):
+            # Using fsspec to list directory contents
+            fs = GenericFileSystem()
+
+            def filter_ckpt_files(f):
+                if CKPT_PREFIX not in f:
+                    return False
+                else:
+                    try:
+                        int(f.split("_")[-1])
+                        return True
+                    except ValueError:
+                        return False
+
+            ckpt_files = [f for f in fs.ls(self.path, detail=False) if filter_ckpt_files(f)]
+            # Regex to extract numbers following the CKPT_PREFIX and an underscore
+            # f is usually something like this "file:///hello/model_step_100000"
+            latest_ckpt = max(ckpt_files, key=lambda f: int(f.split("_")[-1]))
+            return latest_ckpt
+
+        return self.resume
 
 
 class Config(BaseConfig):
@@ -290,7 +316,9 @@ def train(config: Config):
             # Otherwise the world messenger will get lonely and hang
             fake_optimizer = inner_optimizer(model.parameters())
             last_loss = load_checkpoint(
-                checkpoint_path=os.path.join(config.ckpt.resume, get_diloco_rank_dir_name(config.hv.world_rank)),
+                checkpoint_path=os.path.join(
+                    config.ckpt.get_resume_path(), get_diloco_rank_dir_name(config.hv.world_rank)
+                ),
                 model=model,
                 optimizer=fake_optimizer,
             )
@@ -329,7 +357,9 @@ def train(config: Config):
 
         if config.ckpt.resume:
             last_loss = load_checkpoint(
-                checkpoint_path=os.path.join(config.ckpt.resume, get_diloco_rank_dir_name(config.hv.world_rank)),
+                checkpoint_path=os.path.join(
+                    config.ckpt.get_resume_path(), get_diloco_rank_dir_name(config.hv.world_rank)
+                ),
                 model=model,
                 optimizer=optimizer.inner_optimizer,
                 scheduler=scheduler,
@@ -346,7 +376,7 @@ def train(config: Config):
         scheduler = scheduler_fn(optimizer)
         if config.ckpt.resume:
             last_loss = load_checkpoint(
-                checkpoint_path=config.ckpt.resume,
+                checkpoint_path=config.ckpt.get_resume_path(),
                 model=model,
                 optimizer=optimizer,
                 scheduler=scheduler,
@@ -483,7 +513,7 @@ def train(config: Config):
             # Save checkpoint every 'checkpoint_interval' steps
             if config.ckpt.interval is not None and real_step % config.ckpt.interval == 0:
                 log(f"saving at step {real_step}, step {step+1}")
-                ckpt_path = os.path.join(config.ckpt.path, f"model_step_{int(real_step)}")
+                ckpt_path = os.path.join(config.ckpt.path, f"{CKPT_PREFIX}_{int(real_step)}")
 
                 if config.hv:
                     ckpt_path = os.path.join(ckpt_path, get_diloco_rank_dir_name(config.hv.world_rank))
