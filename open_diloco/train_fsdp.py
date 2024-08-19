@@ -13,14 +13,12 @@ from contextlib import nullcontext
 import datetime
 from typing import Any, Literal
 
-import fsspec
 from pydantic import model_validator
 import torch
 import wandb
 from pydantic_config import parse_argv, BaseConfig
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
-from fsspec.generic import GenericFileSystem
 from torch.distributed import destroy_process_group, init_process_group
 
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -38,7 +36,15 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed import broadcast_object_list
-from open_diloco.ckpt_utils import load_checkpoint, save_checkpoint
+from open_diloco.ckpt_utils import (
+    CKPT_PREFIX,
+    CkptConfig,
+    check_checkpoint_path_access,
+    delete_old_checkpoints,
+    get_diloco_rank_dir_name,
+    load_checkpoint,
+    save_checkpoint,
+)
 from open_diloco.hivemind_diloco import AllReduceStrategy, DiLoCoOptimizer
 
 
@@ -58,7 +64,6 @@ from open_diloco.utils import (
 TIMEOUT_NCCL_MINUTES = os.environ.get("TIMEOUT_NCCL_MINUTES", 120)
 TARGET_LAYER_ACTIVATIONS = ["self_attn", "lm_head"]
 TEST_VOCAB_SIZE = 1024
-CKPT_PREFIX = "model_step"
 
 
 # Function to initialize the distributed process group
@@ -69,33 +74,6 @@ def ddp_setup():
 
 def log(message):
     logger.info(f"[rank {os.environ['LOCAL_RANK']}] {message}")
-
-
-def check_checkpoint_path_access(checkpoint_path: str, rank: int, world_rank_hv: int | None = None):
-    if world_rank_hv:
-        dummy_file_path = os.path.join(
-            checkpoint_path, get_diloco_rank_dir_name(world_rank_hv), f"dummy_file_{rank}.txt"
-        )
-    else:
-        dummy_file_path = os.path.join(checkpoint_path, f"dummy_file_{rank}.txt")
-
-    with fsspec.open(dummy_file_path, "w") as f:
-        f.write("This is a dummy file for testing access.")
-    gfs = GenericFileSystem()
-    gfs.rm(dummy_file_path)
-
-
-def get_diloco_rank_dir_name(world_rank_diloco: int) -> str:
-    return f"diloco_rank_{world_rank_diloco}"
-
-
-def delete_old_checkpoints(checkpoint_path: str, topk: int):
-    fs = GenericFileSystem()
-    ckpt_files = [f for f in fs.ls(checkpoint_path, detail=False) if filter_ckpt_files(f)]
-    ckpt_files.sort(key=lambda x: int(x.split("_")[-1]))
-    for ckpt_file in ckpt_files[:-topk]:
-        log(f"Deleting old checkpoint {ckpt_file}")
-        fs.rm(ckpt_file, recursive=True)
 
 
 class HvConfig(BaseConfig):
@@ -121,40 +99,6 @@ class HvConfig(BaseConfig):
             if arg_name in values.keys() and isinstance(values[arg_name], str):
                 values[arg_name] = [values[arg_name]]
         return values
-
-
-def filter_ckpt_files(f):
-    if CKPT_PREFIX not in f:
-        return False
-    else:
-        try:
-            int(f.split("_")[-1])
-            return True
-        except ValueError:
-            return False
-
-
-class CkptConfig(BaseConfig):
-    resume: str | bool | None = None  # if resume is a boolean, it means we should resume from the last checkpoint
-    interval: int | None = None
-    path: str = "outputs"
-    topk: int | None = None  # how many checkpoints to keep
-
-    def get_resume_path(self):
-        if self.resume is None:
-            raise ValueError("Resume path is not set")
-        elif isinstance(self.resume, bool):
-            # Using fsspec to list directory contents
-            fs = GenericFileSystem()
-            ckpt_files = [f for f in fs.ls(self.path, detail=False) if filter_ckpt_files(f)]
-
-            if len(ckpt_files) == 0:
-                raise ValueError(f"No checkpoints found in {self.path}")
-
-            latest_ckpt = max(ckpt_files, key=lambda f: int(f.split("_")[-1]))
-            return latest_ckpt
-
-        return self.resume
 
 
 class Config(BaseConfig):
@@ -559,7 +503,9 @@ def train(config: Config):
                 if local_rank == 0:
                     # only the rank 0 deletes the checkpoints
                     if config.ckpt.topk is not None:
-                        delete_old_checkpoints(config.ckpt.path, config.ckpt.topk)
+                        ckpt_deleted = delete_old_checkpoints(config.ckpt.path, config.ckpt.topk)
+                        if ckpt_deleted:
+                            log(f"Deleted old checkpoints: {ckpt_deleted}")
 
             loss_batch = 0
 
