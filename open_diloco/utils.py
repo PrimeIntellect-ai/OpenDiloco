@@ -1,6 +1,6 @@
 import hashlib
 from functools import partial
-import json
+import pickle
 from typing import Any, Generator, Protocol
 
 import torch
@@ -210,6 +210,5 @@ class DummyLogger:
         self.data.append(metrics)
 
     def finish(self):
-        with open(self.project, "a") as f:
-            for d in self.data:
-                f.write(json.dumps(d) + "\n")
+        with open(self.project, "wb") as f:
+            pickle.dump(self.data, f)
