@@ -1,11 +1,13 @@
 import hashlib
 from functools import partial
-from typing import Any, Generator
+import json
+from typing import Any, Generator, Protocol
 
 import torch
 from torch.utils.hooks import RemovableHandle
 from torch.distributed.fsdp import ShardingStrategy
 from torch.utils.data import IterableDataset
+import wandb
 
 
 _FSDP_WRAPPED_MODULE = ["_forward_module.", "_fsdp_wrapped_module."]
@@ -175,3 +177,39 @@ class FakeTokenizedDataset(IterableDataset):
             input_ids = torch.randint(3, self.vocab_size, (self.seq_len,)).tolist()
             attention_mask = [1] * self.seq_len
             yield {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+class Logger(Protocol):
+    def __init__(self, project, config): ...
+
+    def log(self, metrics: dict[str, Any]): ...
+
+    def finish(self): ...
+
+
+class WandbLogger:
+    def __init__(self, project, config):
+        wandb.init(project=project, config=config)
+
+    def log(self, metrics: dict[str, Any]):
+        wandb.log(metrics)
+
+    def finish(self):
+        wandb.finish()
+
+
+class DummyLogger:
+    def __init__(self, project, config):
+        self.project = project
+        self.config = config
+        open(project, "a").close()  # Create an empty file at the project path
+
+        self.data = []
+
+    def log(self, metrics: dict[str, Any]):
+        self.data.append(metrics)
+
+    def finish(self):
+        with open(self.project, "a") as f:
+            for d in self.data:
+                f.write(json.dumps(d) + "\n")
