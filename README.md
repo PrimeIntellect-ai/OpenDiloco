@@ -120,8 +120,8 @@ torchrun --nproc_per_node=8 \
     --lr 4e-4 \
     --path_model PrimeIntellect/llama-150m-fresh \
     --log-activations-steps 200 \
-    --checkpoint-interval 8000 \
-    --checkpoint-path 150_ckpt
+    --ckpt.interval 8000 \
+    --ckpt.path 150_ckpt
 ```
 
 ## 150m on 8 DiLoCo Worker with 500 local steps
@@ -139,8 +139,8 @@ In the `open_diloco` folder, run:
     --lr 4e-4 \
     --path-model PrimeIntellect/llama-150m-fresh \
     --log-activations-steps 250 \
-    --checkpoint-interval 4975  \
-    --checkpoint-path 150_ckpt
+    --ckpt.interval 4975  \
+    --ckpt.path 150_ckpt
 ```
 
 under the hood the `run_training.sh` script calls `train_fsdp.py` 8 times with the right argument to simulate 8 workers locally.
@@ -161,8 +161,8 @@ In the `open_diloco` folder, run:
     --lr 4e-4 \
     --path-model PrimeIntellect/llama-150m-fresh \
     --log-activations-steps 250 \
-    --checkpoint-interval 4975  \
-    --checkpoint-path 150_ckpt
+    --ckpt.interval 4975  \
+    --ckpt.path 150_ckpt
 ```
 
 ## 1b Baseline
@@ -178,8 +178,8 @@ torchrun --nproc_per_node=8 \
     --project OpenDiLoCo \
     --lr 4e-4 \
     --path_model PrimeIntellect/llama-1b-fresh \
-    --checkpoint-path 1b_ckpt \
-    --checkpoint-interval 500
+    --ckpt.path 1b_ckpt \
+    --ckpt.interval 500
 ```
 
 ## 1b on 4 DiLoCo Workers with 500 local steps
@@ -208,7 +208,7 @@ torchrun --nproc_per_node=8 \
     --hv.galaxy-size 4 \
     --hv.world-rank $WORLD_RANK \
     --checkpoint_interval 500 \
-    --checkpoint-path 1b_diloco_ckpt
+    --ckpt.path 1b_diloco_ckpt
 ```
 ## 1b on 4 DiLoCo Workers with 125 local steps
 
@@ -238,7 +238,7 @@ torchrun --nproc_per_node=8 \
     --hv.galaxy-size 4 \
     --hv.world-rank $WORLD_RANK \
     --checkpoint_interval 500 \
-    --checkpoint-path 1b_diloco_ckpt
+    --ckpt.path 1b_diloco_ckpt
 ```
 
 # Use OpenDiLoCo in your own code
