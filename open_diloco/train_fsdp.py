@@ -113,6 +113,12 @@ class HvConfig(BaseConfig):
         return values
 
 
+class CkptConfig(BaseConfig):
+    resume: str | None = None
+    interval: int | None = None
+    path: str = "outputs"
+
+
 class Config(BaseConfig):
     path_model: str = "PrimeIntellect/llama-150m-fresh"
     torch_compile: bool = True
@@ -133,9 +139,7 @@ class Config(BaseConfig):
     # Checkpointing and logging
     project: str = "hivemind_debug"
     log_activations_steps: int | None = None
-    resume_from_checkpoint: str | None = None
-    checkpoint_interval: int | None = None
-    checkpoint_path: str = "outputs"
+    ckpt: CkptConfig = CkptConfig()
     # Hivemind
     hv: HvConfig | None = None  # if no hv config then hivemind is disabled
     fake_data: bool = False
@@ -228,7 +232,7 @@ def train(config: Config):
         log_visible_maddrs(dht.get_visible_maddrs(), only_p2p=False)
 
     if local_rank == 0:
-        check_checkpoint_path_access(config.checkpoint_path, rank, config.hv.world_rank if config.hv else None)
+        check_checkpoint_path_access(config.ckpt.path, rank, config.hv.world_rank if config.hv else None)
 
     # DataLoader preparation
     tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
@@ -279,16 +283,14 @@ def train(config: Config):
         )
 
     if config.hv is not None:
-        if config.resume_from_checkpoint:
+        if config.ckpt.resume:
             # We need to load with a fake optimizer to set the model parameters correctly before initializing the DiLoCoOptimizer
             # This is because the DiLoCoOptimizer makes a copy of the model parameters for the state averager which is hard to update later
             # We also need to do this on follower workers so that the world_messenger has friends to talk to when it does its two loads
             # Otherwise the world messenger will get lonely and hang
             fake_optimizer = inner_optimizer(model.parameters())
             last_loss = load_checkpoint(
-                checkpoint_path=os.path.join(
-                    config.resume_from_checkpoint, get_diloco_rank_dir_name(config.hv.world_rank)
-                ),
+                checkpoint_path=os.path.join(config.ckpt.resume, get_diloco_rank_dir_name(config.hv.world_rank)),
                 model=model,
                 optimizer=fake_optimizer,
             )
@@ -325,11 +327,9 @@ def train(config: Config):
             optimizer.inner_optimizer
         )  # scheduler(optimizer) should work but better to make it explicit here
 
-        if config.resume_from_checkpoint:
+        if config.ckpt.resume:
             last_loss = load_checkpoint(
-                checkpoint_path=os.path.join(
-                    config.resume_from_checkpoint, get_diloco_rank_dir_name(config.hv.world_rank)
-                ),
+                checkpoint_path=os.path.join(config.ckpt.resume, get_diloco_rank_dir_name(config.hv.world_rank)),
                 model=model,
                 optimizer=optimizer.inner_optimizer,
                 scheduler=scheduler,
@@ -344,9 +344,9 @@ def train(config: Config):
     else:
         optimizer = inner_optimizer(model.parameters())
         scheduler = scheduler_fn(optimizer)
-        if config.resume_from_checkpoint:
+        if config.ckpt.resume:
             last_loss = load_checkpoint(
-                checkpoint_path=config.resume_from_checkpoint,
+                checkpoint_path=config.ckpt.resume,
                 model=model,
                 optimizer=optimizer,
                 scheduler=scheduler,
@@ -357,7 +357,7 @@ def train(config: Config):
         else:
             start_step = 0
 
-    if config.resume_from_checkpoint:
+    if config.ckpt.resume:
         log(f"Resumed from checkpoint at step {start_step} with loss {last_loss}")
 
     model.train()
@@ -481,9 +481,9 @@ def train(config: Config):
                     )
 
             # Save checkpoint every 'checkpoint_interval' steps
-            if config.checkpoint_interval is not None and real_step % config.checkpoint_interval == 0:
+            if config.ckpt.interval is not None and real_step % config.ckpt.interval == 0:
                 log(f"saving at step {real_step}, step {step+1}")
-                ckpt_path = os.path.join(config.checkpoint_path, f"model_step_{int(real_step)}")
+                ckpt_path = os.path.join(config.ckpt.path, f"model_step_{int(real_step)}")
 
                 if config.hv:
                     ckpt_path = os.path.join(ckpt_path, get_diloco_rank_dir_name(config.hv.world_rank))
