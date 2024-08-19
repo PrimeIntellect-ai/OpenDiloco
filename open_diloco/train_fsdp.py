@@ -89,6 +89,15 @@ def get_diloco_rank_dir_name(world_rank_diloco: int) -> str:
     return f"diloco_rank_{world_rank_diloco}"
 
 
+def delete_old_checkpoints(checkpoint_path: str, topk: int):
+    fs = GenericFileSystem()
+    ckpt_files = [f for f in fs.ls(checkpoint_path, detail=False) if filter_ckpt_files(f)]
+    ckpt_files.sort(key=lambda x: int(x.split("_")[-1]))
+    for ckpt_file in ckpt_files[:-topk]:
+        log(f"Deleting old checkpoint {ckpt_file}")
+        fs.rm(ckpt_file, recursive=True)
+
+
 class HvConfig(BaseConfig):
     outer_lr: float = 0.7
     local_steps: int = 500
@@ -114,10 +123,22 @@ class HvConfig(BaseConfig):
         return values
 
 
+def filter_ckpt_files(f):
+    if CKPT_PREFIX not in f:
+        return False
+    else:
+        try:
+            int(f.split("_")[-1])
+            return True
+        except ValueError:
+            return False
+
+
 class CkptConfig(BaseConfig):
     resume: str | bool | None = None  # if resume is a boolean, it means we should resume from the last checkpoint
     interval: int | None = None
     path: str = "outputs"
+    topk: int | None = None  # how many checkpoints to keep
 
     def get_resume_path(self):
         if self.resume is None:
@@ -125,20 +146,11 @@ class CkptConfig(BaseConfig):
         elif isinstance(self.resume, bool):
             # Using fsspec to list directory contents
             fs = GenericFileSystem()
-
-            def filter_ckpt_files(f):
-                if CKPT_PREFIX not in f:
-                    return False
-                else:
-                    try:
-                        int(f.split("_")[-1])
-                        return True
-                    except ValueError:
-                        return False
-
             ckpt_files = [f for f in fs.ls(self.path, detail=False) if filter_ckpt_files(f)]
-            # Regex to extract numbers following the CKPT_PREFIX and an underscore
-            # f is usually something like this "file:///hello/model_step_100000"
+
+            if len(ckpt_files) == 0:
+                raise ValueError(f"No checkpoints found in {self.path}")
+
             latest_ckpt = max(ckpt_files, key=lambda f: int(f.split("_")[-1]))
             return latest_ckpt
 
@@ -543,6 +555,11 @@ def train(config: Config):
                         data_loader=train_dataloader,
                         save_global_state=rank == 0,
                     )
+
+                if local_rank == 0:
+                    # only the rank 0 deletes the checkpoints
+                    if config.ckpt.topk is not None:
+                        delete_old_checkpoints(config.ckpt.path, config.ckpt.topk)
 
             loss_batch = 0
 
