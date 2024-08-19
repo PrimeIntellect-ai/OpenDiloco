@@ -1,15 +1,9 @@
+import subprocess
 import pytest
+import socket
 import os
 from unittest import mock
-import socket
-from contextlib import contextmanager
-import multiprocessing
-import copy
-import torch
-import gc
-
 from hivemind.dht.dht import DHT
-from open_diloco.train_fsdp import train, Config, ddp_setup, destroy_process_group, HvConfig
 
 
 @pytest.fixture(autouse=True)
@@ -18,18 +12,6 @@ def set_env():
 
     with mock.patch.dict(os.environ, {"WANDB_MODE": "disabled"}):
         yield
-
-
-@pytest.fixture(autouse=True)
-def memory_cleanup():
-    # credits to : https://github.com/pytorch/pytorch/issues/82218#issuecomment-1675254117
-    try:
-        gc.collect()
-        torch.cuda.empty_cache()
-        yield
-    finally:
-        gc.collect()
-        torch.cuda.empty_cache()
 
 
 def get_random_available_port():
@@ -45,83 +27,99 @@ def random_available_port():
 
 
 @pytest.fixture
-def config() -> Config:
-    return Config(
-        path_model="tests/models/llama-2m-fresh",
-        fake_data=True,
-        torch_compile=False,
-        lr=1e-2,
-        per_device_train_batch_size=8,
-        total_batch_size=16,
-        max_steps=10,
+def config() -> list[str]:
+    return [
+        "--path_model",
+        "tests/models/llama-2m-fresh",
+        "--fake_data",
+        "--no-torch_compile",
+        "--lr",
+        "1e-2",
+        "--per_device_train_batch_size",
+        "8",
+        "--total_batch_size",
+        "16",
+        "--max_steps",
+        "50",
+    ]
+
+
+@pytest.mark.parametrize("num_gpu", [1, 2])
+def test_multi_gpu(config, random_available_port, num_gpu):
+    result = subprocess.run(
+        [
+            "torchrun",
+            f"--nproc_per_node={num_gpu}",
+            "--rdzv-endpoint",
+            f"localhost:{random_available_port}",
+            "open_diloco/train_fsdp.py",
+            *config,
+        ],
     )
 
-
-@contextmanager
-def ddp_environment(random_available_port, local_rank=0, world_size=1):
-    with mock.patch.dict(
-        os.environ,
-        {
-            "LOCAL_RANK": str(local_rank),
-            "WORLD_SIZE": str(world_size),
-            "RANK": str(local_rank),
-            "MASTER_ADDR": "localhost",
-            "MASTER_PORT": str(random_available_port),
-        },
-    ):
-        ddp_setup()
-        try:
-            yield
-        finally:
-            destroy_process_group()
+    if result.returncode != 0:
+        pytest.fail(f"Process {result} failed {result.stderr}")
 
 
 @pytest.fixture
-def simple_ddp_environment(random_available_port):
-    with ddp_environment(random_available_port, local_rank=0, world_size=1):
-        yield
+def config_hv() -> list[str]:
+    config = [
+        "--path_model",
+        "tests/models/llama-2m-fresh",
+        "--fake_data",
+        "--no-torch_compile",
+        "--lr",
+        "1e-2",
+        "--per_device_train_batch_size",
+        "8",
+        "--total_batch_size",
+        "16",
+        "--max_steps",
+        "100",
+    ]
+
+    return config + [
+        "--hv.local_steps",
+        "25",
+        "--hv.skip_load_from_peers",
+        "--hv.fail_rank_drop",
+        "--hv.matchmaking_time",
+        "5",
+    ]
 
 
-def test_train(config, simple_ddp_environment):
-    train(config)
+@pytest.mark.parametrize("num_diloco", [1, 2])
+def test_multi_gpu_hivemind(config_hv, num_diloco):
+    dht = DHT(
+        start=True,
+        host_maddrs=[f"/ip4/0.0.0.0/tcp/{get_random_available_port()}"],
+    )
 
+    initial_peers = str(dht.get_visible_maddrs()[0])
 
-@pytest.mark.parametrize("world_size", [2])
-def test_multi_gpu(config, random_available_port, world_size):
-    def worker(local_rank):
-        with ddp_environment(random_available_port, local_rank=local_rank, world_size=world_size):
-            train(config)
+    results = []
 
-    processes = [multiprocessing.Process(target=worker, args=(rank,)) for rank in range(world_size)]
-    for p in processes:
-        p.start()
-    for p in processes:
-        p.join()
+    for i in range(num_diloco):
+        port = get_random_available_port()
+        result = subprocess.Popen(
+            [
+                "torchrun",
+                f"--nproc_per_node={1}",
+                "--rdzv-endpoint",
+                f"localhost:{port}",
+                "open_diloco/train_fsdp.py",
+                *config_hv,
+                "--hv.initial_peers",
+                initial_peers,
+                "--hv.world_rank",
+                str(i),
+                "--hv.galaxy_size",
+                str(num_diloco),
+            ],
+        )
+        results.append(result)
 
-
-@pytest.fixture
-def diloco_config(config: Config) -> Config:
-    hv_config = HvConfig(local_steps=5, skip_load_from_peers=True, world_rank=0, galaxy_size=1)
-    config.hv = hv_config
-
-    return config
-
-
-@pytest.mark.parametrize("galaxy_size", [2])
-def test_diloco_train(diloco_config: Config, galaxy_size):
-    dht = DHT(start=True)
-    diloco_config.hv.initial_peers = dht.get_visible_maddrs()
-    diloco_config.max_steps = 100
-
-    def worker(world_rank):
-        with ddp_environment(get_random_available_port(), local_rank=0, world_size=1):
-            config_copy: Config = copy.deepcopy(diloco_config)
-            config_copy.hv.galaxy_size = galaxy_size
-            config_copy.hv.world_rank = world_rank
-            train(config_copy)
-
-    processes = [multiprocessing.Process(target=worker, args=(rank,)) for rank in range(galaxy_size)]
-    for p in processes:
-        p.start()
-    for p in processes:
-        p.join()
+    for result in results:
+        result.wait()
+        if result.returncode != 0:
+            pytest.fail(f"Process {result} failed {result.stderr}")
