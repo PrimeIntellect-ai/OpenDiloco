@@ -15,7 +15,6 @@ from typing import Any, Literal
 
 from pydantic import model_validator
 import torch
-import wandb
 from pydantic_config import parse_argv, BaseConfig
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
@@ -35,7 +34,6 @@ from torch.distributed.fsdp import (
     MixedPrecision,
 )
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed import broadcast_object_list
 from open_diloco.ckpt_utils import (
     CKPT_PREFIX,
     CkptConfig,
@@ -46,7 +44,7 @@ from open_diloco.ckpt_utils import (
     save_checkpoint,
 )
 from open_diloco.hivemind_diloco import AllReduceStrategy, DiLoCoOptimizer
-
+from open_diloco.utils import WandbLogger, DummyLogger
 
 from hivemind.dht.dht import DHT
 from hivemind.utils.networking import log_visible_maddrs
@@ -120,6 +118,7 @@ class Config(BaseConfig):
     precision: Literal["fp16-mixed", "bf16-mixed", "32-true"] = "fp16-mixed"
     # Checkpointing and logging
     project: str = "hivemind_debug"
+    metric_logger_type: Literal["wandb", "dummy"] = "wandb"
     log_activations_steps: int | None = None
     ckpt: CkptConfig = CkptConfig()
     # Hivemind
@@ -192,14 +191,9 @@ def train(config: Config):
         sharding_strategy = ShardingStrategy.NO_SHARD
         log("Hivemind is used, ShardingStrategy.NO_SHARD is used")
 
-    run_id = None
     if rank == 0:
-        wandb.init(project=config.project, config=config.model_dump())
-        run_id = wandb.run.id
-
-    run_id_list = [run_id]
-    broadcast_object_list(run_id_list, src=0)
-    run_id = run_id_list[0]
+        logger_cls = WandbLogger if config.metric_logger_type == "wandb" else DummyLogger
+        metric_logger = logger_cls(project=config.project, config=config.model_dump())
 
     if config.hv is not None:
         log("hivemind diloco enabled")
@@ -459,7 +453,7 @@ def train(config: Config):
 
                 current_time = time.time()
 
-                wandb.log(metrics)
+                metric_logger.log(metrics)
 
                 if config.hv is None:
                     log(
@@ -512,7 +506,7 @@ def train(config: Config):
             if config.max_steps is not None and real_step >= config.max_steps:
                 break
     log("Training completed.")
-    wandb.finish()
+    metric_logger.finish()
 
 
 if __name__ == "__main__":
