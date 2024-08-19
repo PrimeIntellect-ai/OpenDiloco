@@ -506,7 +506,8 @@ def train(config: Config):
             if config.max_steps is not None and real_step >= config.max_steps:
                 break
     log("Training completed.")
-    metric_logger.finish()
+    if rank == 0:
+        metric_logger.finish()
 
 
 if __name__ == "__main__":
