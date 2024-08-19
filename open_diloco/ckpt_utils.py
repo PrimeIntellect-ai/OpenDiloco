@@ -1,11 +1,38 @@
 import fsspec
+from pydantic_config import BaseConfig
 import torch
 from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 import torch.distributed.checkpoint as dcp
 import os
 from torchdata.stateful_dataloader import StatefulDataLoader
+from fsspec.generic import GenericFileSystem
+
 
 GLOBAL_STATE_FILE = "global_state_dict.pt"
+CKPT_PREFIX = "model_step"
+
+
+class CkptConfig(BaseConfig):
+    resume: str | bool | None = None  # if resume is a boolean, it means we should resume from the last checkpoint
+    interval: int | None = None
+    path: str = "outputs"
+    topk: int | None = None  # how many checkpoints to keep
+
+    def get_resume_path(self):
+        if self.resume is None:
+            raise ValueError("Resume path is not set")
+        elif isinstance(self.resume, bool):
+            # Using fsspec to list directory contents
+            fs = GenericFileSystem()
+            ckpt_files = [f for f in fs.ls(self.path, detail=False) if filter_ckpt_files(f)]
+
+            if len(ckpt_files) == 0:
+                raise ValueError(f"No checkpoints found in {self.path}")
+
+            latest_ckpt = max(ckpt_files, key=lambda f: int(f.split("_")[-1]))
+            return latest_ckpt
+
+        return self.resume
 
 
 def save_checkpoint(
@@ -117,3 +144,44 @@ def load_checkpoint(
     if scaler is not None:
         scaler.load_state_dict(global_state_dict["scaler"])
     return global_state_dict["loss"]
+
+
+def filter_ckpt_files(f):
+    if CKPT_PREFIX not in f:
+        return False
+    else:
+        try:
+            int(f.split("_")[-1])
+            return True
+        except ValueError:
+            return False
+
+
+def delete_old_checkpoints(checkpoint_path: str, topk: int) -> list[str]:
+    fs = GenericFileSystem()
+    ckpt_files = [f for f in fs.ls(checkpoint_path, detail=False) if filter_ckpt_files(f)]
+    ckpt_files.sort(key=lambda x: int(x.split("_")[-1]))
+
+    ckpt_deleted = []
+    for ckpt_file in ckpt_files[:-topk]:
+        fs.rm(ckpt_file, recursive=True)
+        ckpt_deleted.append(ckpt_file)
+    return ckpt_deleted
+
+
+def check_checkpoint_path_access(checkpoint_path: str, rank: int, world_rank_hv: int | None = None):
+    if world_rank_hv:
+        dummy_file_path = os.path.join(
+            checkpoint_path, get_diloco_rank_dir_name(world_rank_hv), f"dummy_file_{rank}.txt"
+        )
+    else:
+        dummy_file_path = os.path.join(checkpoint_path, f"dummy_file_{rank}.txt")
+
+    with fsspec.open(dummy_file_path, "w") as f:
+        f.write("This is a dummy file for testing access.")
+    gfs = GenericFileSystem()
+    gfs.rm(dummy_file_path)
+
+
+def get_diloco_rank_dir_name(world_rank_diloco: int) -> str:
+    return f"diloco_rank_{world_rank_diloco}"
