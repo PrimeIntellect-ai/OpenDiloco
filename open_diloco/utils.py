@@ -8,13 +8,13 @@ from torch.distributed.fsdp import ShardingStrategy
 from torch.utils.data import IterableDataset
 
 
-_FSDP_WRAPPED_MODULE = ["_forward_module.", "_fsdp_wrapped_module."]
+_WRAPPED_NAME_TO_REMOVE = ["_forward_module.", "_fsdp_wrapped_module.", "_orig_mod."]
 
 
 def _remove_fsdp_prefix(name: str) -> str:
-    for prefix in _FSDP_WRAPPED_MODULE:
+    for prefix in _WRAPPED_NAME_TO_REMOVE:
         if prefix in name:
-            return name.replace(prefix, "")
+            name = name.replace(prefix, "")
     return name
 
 
@@ -32,7 +32,6 @@ def log_activations_hook(
     norm = outp.norm(p=2)
 
     name = _remove_fsdp_prefix(mod_name)
-
     if f"activation/{name}" not in log_activations:
         log_activations[f"activation/{name}"] = norm
     else:
