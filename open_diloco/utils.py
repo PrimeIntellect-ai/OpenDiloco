@@ -28,7 +28,6 @@ def log_activations_hook(
     gradient_accumulation_steps: int,
     log_activations: dict[str, float],
 ) -> None:
-    # print(f"HERE {mod_name}")
     if isinstance(outp, tuple):
         outp = outp[0]
     norm = outp.norm(p=2) / gradient_accumulation_steps
@@ -37,7 +36,6 @@ def log_activations_hook(
         log_activations[f"activation/{name}"] = norm
     else:
         log_activations[f"activation/{name}"] += norm
-    # print(log_activations, id(log_activations))
 
 
 def register_metrics_hooks(
