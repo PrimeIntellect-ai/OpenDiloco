@@ -54,10 +54,10 @@ from hivemind.optim.optimizer import logger
 
 
 from open_diloco.utils import (
-    ActivationNormMetric,
     FakeTokenizedDataset,
     get_compression_kwargs,
     get_sharding_strategy,
+    register_metrics_hooks,
 )
 
 
@@ -359,6 +359,8 @@ def train(config: Config):
     if world_messenger_hv:
         max_num_peers = 0
 
+    log_activations = {}
+
     for step, batch in enumerate(iterable=train_dataloader, start=start_step * gradient_accumulation_steps):
         real_step = (step + 1) // gradient_accumulation_steps
         is_accumulating = bool((step + 1) % gradient_accumulation_steps)
@@ -368,11 +370,7 @@ def train(config: Config):
         )
 
         if logging_activations_steps:
-            activation_monitor = ActivationNormMetric(
-                target_layers=TARGET_LAYER_ACTIVATIONS,
-                gradient_accumulation_steps=gradient_accumulation_steps,
-            )
-            activation_monitor.register_metrics_hooks(model)
+            handles = register_metrics_hooks(model, TARGET_LAYER_ACTIVATIONS, log_activations)
 
         for key in batch.keys():
             batch[key] = batch[key].to("cuda")
@@ -384,6 +382,10 @@ def train(config: Config):
             loss_batch += loss.detach()
 
             scaler.scale(loss).backward()
+
+        if logging_activations_steps:
+            for handle in handles:
+                handle.remove()
 
         if not is_accumulating:
             if world_messenger_hv:
@@ -405,9 +407,6 @@ def train(config: Config):
 
             scheduler.step()
             optimizer.zero_grad()
-
-            if logging_activations_steps:
-                activation_monitor.remove_hooks()
 
             if config.hv is not None:
                 if int(real_step) % config.hv.local_steps == 0:
@@ -448,7 +447,8 @@ def train(config: Config):
                     metrics["num_peers"] = num_peers
 
                 if logging_activations_steps:
-                    metrics.update(activation_monitor.log_activations)
+                    metrics.update({k: v / gradient_accumulation_steps for k, v in log_activations.items()})
+                    log_activations = {}
 
                 if world_messenger_hv and num_peers < max_num_peers:
                     log(message=f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}")

@@ -18,6 +18,7 @@ def _remove_fsdp_prefix(name: str) -> str:
     return name
 
 
+@torch.compiler.disable()
 @torch.no_grad()
 def log_activations_hook(
     _mod: torch.nn.Module,
@@ -26,54 +27,35 @@ def log_activations_hook(
     mod_name: str,
     log_activations: dict[str, float],
 ) -> None:
+    # print(f"HERE {mod_name}")
     if isinstance(outp, tuple):
         outp = outp[0]
-
     norm = outp.norm(p=2)
-
     name = _remove_fsdp_prefix(mod_name)
     if f"activation/{name}" not in log_activations:
         log_activations[f"activation/{name}"] = norm
     else:
         log_activations[f"activation/{name}"] += norm
+    # print(log_activations, id(log_activations))
 
 
-class ActivationNormMetric:
+def register_metrics_hooks(
+    model: torch.nn.Module, target_layers: list[str], log_activations: dict[str, torch.Tensor]
+) -> list[RemovableHandle]:
     """
-    This class is used to monitor the norm of the activation of the target layers.
-    It attached hook to the forward of each layer that will log the output, and remove them after.
+    this function take a torch   module, a list of layer name and apply a hook function that
+    monitor the output norm of the layers.
     """
+    handles = []
+    for name, mod in model.named_modules():
+        for layer in target_layers:
+            if name.endswith(layer):
+                handle = mod.register_forward_hook(
+                    partial(log_activations_hook, log_activations=log_activations, mod_name=name)
+                )
+                handles.append(handle)
 
-    def __init__(self, target_layers: list[str], gradient_accumulation_steps: int):
-        self.target_layers = target_layers
-        self.handles: list[RemovableHandle] = []
-        self._log_activations: dict[str, torch.Tensor] = {}
-        self.gradient_accumulation_steps = gradient_accumulation_steps
-
-    def register_metrics_hooks(self, model: torch.nn.Module):
-        """
-        this function take a torch module, a list of layer name and apply a hook function that
-        monitor the output norm of the layers.
-        """
-        handles = []
-        for name, mod in model.named_modules():
-            for layer in self.target_layers:
-                if name.endswith(layer):
-                    handle = mod.register_forward_hook(
-                        partial(log_activations_hook, log_activations=self._log_activations, mod_name=name)
-                    )
-                    handles.append(handle)
-                    break
-
-        self.handles = handles
-
-    def remove_hooks(self) -> None:
-        for handle in self.handles:
-            handle.remove()
-
-    @property
-    def log_activations(self) -> dict[str, torch.Tensor]:
-        return {k: v / self.gradient_accumulation_steps for k, v in self._log_activations.items()}
+    return handles
 
 
 def _round_str(x: float):
