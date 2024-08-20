@@ -370,7 +370,9 @@ def train(config: Config):
         )
 
         if logging_activations_steps:
-            handles = register_metrics_hooks(model, TARGET_LAYER_ACTIVATIONS, log_activations)
+            handles = register_metrics_hooks(
+                model, TARGET_LAYER_ACTIVATIONS, log_activations, gradient_accumulation_steps
+            )
 
         for key in batch.keys():
             batch[key] = batch[key].to("cuda")
@@ -447,7 +449,7 @@ def train(config: Config):
                     metrics["num_peers"] = num_peers
 
                 if logging_activations_steps:
-                    metrics.update({k: v / gradient_accumulation_steps for k, v in log_activations.items()})
+                    metrics.update(log_activations)
                     log_activations = {}
 
                 if world_messenger_hv and num_peers < max_num_peers:

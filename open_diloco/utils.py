@@ -25,12 +25,13 @@ def log_activations_hook(
     _inp: torch.Tensor,
     outp: torch.Tensor | tuple[torch.Tensor, ...],
     mod_name: str,
+    gradient_accumulation_steps: int,
     log_activations: dict[str, float],
 ) -> None:
     # print(f"HERE {mod_name}")
     if isinstance(outp, tuple):
         outp = outp[0]
-    norm = outp.norm(p=2)
+    norm = outp.norm(p=2) / gradient_accumulation_steps
     name = _remove_fsdp_prefix(mod_name)
     if f"activation/{name}" not in log_activations:
         log_activations[f"activation/{name}"] = norm
@@ -40,7 +41,10 @@ def log_activations_hook(
 
 
 def register_metrics_hooks(
-    model: torch.nn.Module, target_layers: list[str], log_activations: dict[str, torch.Tensor]
+    model: torch.nn.Module,
+    target_layers: list[str],
+    log_activations: dict[str, torch.Tensor],
+    gradient_accumulation_steps: int,
 ) -> list[RemovableHandle]:
     """
     this function take a torch   module, a list of layer name and apply a hook function that
@@ -51,7 +55,12 @@ def register_metrics_hooks(
         for layer in target_layers:
             if name.endswith(layer):
                 handle = mod.register_forward_hook(
-                    partial(log_activations_hook, log_activations=log_activations, mod_name=name)
+                    partial(
+                        log_activations_hook,
+                        log_activations=log_activations,
+                        mod_name=name,
+                        gradient_accumulation_steps=gradient_accumulation_steps,
+                    )
                 )
                 handles.append(handle)
 
