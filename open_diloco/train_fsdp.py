@@ -33,7 +33,8 @@ from torch.distributed.fsdp import (
     ShardingStrategy,
     MixedPrecision,
 )
-from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.device_mesh import init_device_mesh
+
 from open_diloco.ckpt_utils import (
     CKPT_PREFIX,
     CkptConfig,
@@ -229,10 +230,7 @@ def train(config: Config):
     ]:
         local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
         nnodes = world_size // local_world_size
-        device_mesh = DeviceMesh(
-            "cuda",
-            mesh=[[i * local_world_size + j for j in range(local_world_size)] for i in range(nnodes)],
-        )
+        device_mesh = init_device_mesh("cuda", (nnodes, local_world_size), mesh_dim_names=("global", "local"))
     else:
         device_mesh = None
     model = FSDP(
