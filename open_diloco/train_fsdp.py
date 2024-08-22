@@ -78,6 +78,7 @@ def log(message):
 
 class HvConfig(BaseConfig):
     outer_lr: float = 0.7
+    min_outer_lr: float = 0.0
     local_steps: int = 500
     initial_peers: list[str] | None = None
     host_maddrs: list[str] = ["/ip4/0.0.0.0/tcp/0"]
@@ -209,14 +210,17 @@ def _get_lr_outer(
     num_warmup_steps: int,
     num_training_steps: int,
     num_cycles: float,
-    min_lr_rate: float = 0.0,
+    min_lr: float = 0.0,
 ):
+    num_training_steps = num_training_steps / 2
     if current_step < num_warmup_steps:
         return 1
+    if current_step > num_training_steps:
+        return min_lr
 
     progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
     factor = 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
-    factor = factor * (1 - min_lr_rate) + min_lr_rate
+    factor = factor * (1 - min_lr) + min_lr
     return max(0, factor)
 
 
@@ -227,6 +231,7 @@ def get_lr_outer(optimizer, config: Config):
         # num_training_steps=config.total_steps,
         num_training_steps=config.total_steps,
         num_cycles=0.5,
+        min_lr=config.hv.min_outer_lr,
     )
     return LambdaLR(optimizer, lambda_lr, -1)
 
