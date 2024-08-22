@@ -272,6 +272,13 @@ def train(config: Config):
             )
             del fake_optimizer
 
+    if config.ckpt.resume:
+        base_path = config.ckpt.get_resume_path()
+        if config.hv is not None:
+            ckpt_path = os.path.join(base_path, get_diloco_rank_dir_name(config.hv.world_rank))
+        else:
+            ckpt_path = base_path
+
     if world_messenger_hv:
         diloco_args = dict(
             dht=dht,
@@ -305,9 +312,7 @@ def train(config: Config):
 
         if config.ckpt.resume:
             last_loss = load_checkpoint(
-                checkpoint_path=os.path.join(
-                    config.ckpt.get_resume_path(), get_diloco_rank_dir_name(config.hv.world_rank)
-                ),
+                checkpoint_path=ckpt_path,
                 model=model,
                 optimizer=optimizer.inner_optimizer,
                 scheduler=scheduler,
@@ -324,7 +329,7 @@ def train(config: Config):
         scheduler = scheduler_fn(optimizer)
         if config.ckpt.resume:
             last_loss = load_checkpoint(
-                checkpoint_path=config.ckpt.get_resume_path(),
+                checkpoint_path=ckpt_path,
                 model=model,
                 optimizer=optimizer,
                 scheduler=scheduler,
