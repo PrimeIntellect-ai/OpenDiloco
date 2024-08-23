@@ -176,8 +176,10 @@ class Logger(Protocol):
 
 
 class WandbLogger:
-    def __init__(self, project, config):
-        wandb.init(project=project, config=config)
+    def __init__(self, project, config, resume: bool):
+        wandb.init(
+            project=project, config=config, resume="auto" if resume else None
+        )  # make wandb reuse the same run id if possible
 
     def log(self, metrics: dict[str, Any]):
         wandb.log(metrics)
@@ -187,7 +189,7 @@ class WandbLogger:
 
 
 class DummyLogger:
-    def __init__(self, project, config):
+    def __init__(self, project, config, *args, **kwargs):
         self.project = project
         self.config = config
         open(project, "a").close()  # Create an empty file at the project path
