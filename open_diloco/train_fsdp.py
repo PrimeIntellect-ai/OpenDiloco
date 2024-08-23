@@ -41,6 +41,7 @@ from open_diloco.ckpt_utils import (
     check_checkpoint_path_access,
     delete_old_checkpoints,
     get_diloco_rank_dir_name,
+    get_resume_info,
     load_checkpoint,
     save_checkpoint,
 )
@@ -256,28 +257,27 @@ def train(config: Config):
             num_training_steps=config.total_steps,
         )
 
+    resume_from_ckpt, resume_path = get_resume_info(config.ckpt)
+
     if config.hv is not None:
-        if config.ckpt.resume:
+        if resume_from_ckpt:
             # We need to load with a fake optimizer to set the model parameters correctly before initializing the DiLoCoOptimizer
             # This is because the DiLoCoOptimizer makes a copy of the model parameters for the state averager which is hard to update later
             # We also need to do this on follower workers so that the world_messenger has friends to talk to when it does its two loads
             # Otherwise the world messenger will get lonely and hang
             fake_optimizer = inner_optimizer(model.parameters())
             last_loss = load_checkpoint(
-                checkpoint_path=os.path.join(
-                    config.ckpt.get_resume_path(), get_diloco_rank_dir_name(config.hv.world_rank)
-                ),
+                checkpoint_path=os.path.join(resume_path, get_diloco_rank_dir_name(config.hv.world_rank)),
                 model=model,
                 optimizer=fake_optimizer,
             )
             del fake_optimizer
 
-    if config.ckpt.resume:
-        base_path = config.ckpt.get_resume_path()
+    if resume_from_ckpt:
         if config.hv is not None:
-            ckpt_path = os.path.join(base_path, get_diloco_rank_dir_name(config.hv.world_rank))
+            ckpt_path = os.path.join(resume_path, get_diloco_rank_dir_name(config.hv.world_rank))
         else:
-            ckpt_path = base_path
+            ckpt_path = resume_path
 
     if world_messenger_hv:
         diloco_args = dict(
@@ -310,7 +310,7 @@ def train(config: Config):
             optimizer.inner_optimizer
         )  # scheduler(optimizer) should work but better to make it explicit here
 
-        if config.ckpt.resume:
+        if resume_from_ckpt:
             last_loss = load_checkpoint(
                 checkpoint_path=ckpt_path,
                 model=model,
@@ -327,7 +327,7 @@ def train(config: Config):
     else:
         optimizer = inner_optimizer(model.parameters())
         scheduler = scheduler_fn(optimizer)
-        if config.ckpt.resume:
+        if resume_from_ckpt:
             last_loss = load_checkpoint(
                 checkpoint_path=ckpt_path,
                 model=model,
@@ -340,7 +340,7 @@ def train(config: Config):
         else:
             start_step = 0
 
-    if config.ckpt.resume:
+    if resume_from_ckpt:
         log(f"Resumed from checkpoint at step {start_step} with loss {last_loss}")
 
     model.train()
