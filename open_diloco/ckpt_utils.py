@@ -29,7 +29,11 @@ def get_resume_info(ckpt_config: CkptConfig) -> tuple[bool, str | None]:
     elif isinstance(ckpt_config.resume, bool):
         # Using fsspec to list directory contents
         fs = GenericFileSystem()
-        ckpt_files = [f for f in fs.ls(ckpt_config.path, detail=False) if filter_ckpt_files(f)]
+        try:
+            ckpt_files = [f for f in fs.ls(ckpt_config.path, detail=False) if filter_ckpt_files(f)]
+        except FileNotFoundError:
+            logger.info(f"Checkpoint path {ckpt_config.path} not found, starting from scratch")
+            return False, None
 
         if len(ckpt_files) == 0:
             logger.info(f"No checkpoints found in {ckpt_config.path}, starting from scratch")
