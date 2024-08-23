@@ -193,9 +193,11 @@ def train(config: Config):
         sharding_strategy = ShardingStrategy.NO_SHARD
         log("Hivemind is used, ShardingStrategy.NO_SHARD is used")
 
+    resume_from_ckpt, resume_path = get_resume_info(config.ckpt)
+
     if rank == 0:
         logger_cls = WandbLogger if config.metric_logger_type == "wandb" else DummyLogger
-        metric_logger = logger_cls(project=config.project, config=config.model_dump())
+        metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=resume_from_ckpt)
 
     if config.hv is not None:
         log("hivemind diloco enabled")
@@ -256,8 +258,6 @@ def train(config: Config):
             num_warmup_steps=config.warmup_steps,
             num_training_steps=config.total_steps,
         )
-
-    resume_from_ckpt, resume_path = get_resume_info(config.ckpt)
 
     if config.hv is not None:
         if resume_from_ckpt:
@@ -510,6 +510,7 @@ def train(config: Config):
 
             if config.max_steps is not None and real_step >= config.max_steps:
                 break
+
     log("Training completed.")
     if rank == 0:
         metric_logger.finish()
