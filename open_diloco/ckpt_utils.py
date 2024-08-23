@@ -6,6 +6,7 @@ import torch.distributed.checkpoint as dcp
 import os
 from torchdata.stateful_dataloader import StatefulDataLoader
 from fsspec.generic import GenericFileSystem
+from hivemind.optim.optimizer import logger
 
 
 GLOBAL_STATE_FILE = "global_state_dict.pt"
@@ -18,21 +19,26 @@ class CkptConfig(BaseConfig):
     path: str = "outputs"
     topk: int | None = None  # how many checkpoints to keep
 
-    def get_resume_path(self):
-        if self.resume is None:
-            raise ValueError("Resume path is not set")
-        elif isinstance(self.resume, bool):
-            # Using fsspec to list directory contents
-            fs = GenericFileSystem()
-            ckpt_files = [f for f in fs.ls(self.path, detail=False) if filter_ckpt_files(f)]
 
-            if len(ckpt_files) == 0:
-                raise ValueError(f"No checkpoints found in {self.path}")
+def get_resume_info(ckpt_config: CkptConfig) -> tuple[bool, str | None]:
+    """
+    check if we should resume from a checkpoint, if yes return the path to the checkpoint, otherwise return None
+    """
+    if ckpt_config.resume is None:
+        return False, None
+    elif isinstance(ckpt_config.resume, bool):
+        # Using fsspec to list directory contents
+        fs = GenericFileSystem()
+        ckpt_files = [f for f in fs.ls(ckpt_config.path, detail=False) if filter_ckpt_files(f)]
 
-            latest_ckpt = max(ckpt_files, key=lambda f: int(f.split("_")[-1]))
-            return latest_ckpt
+        if len(ckpt_files) == 0:
+            logger.info(f"No checkpoints found in {ckpt_config.path}, starting from scratch")
+            return False, None
 
-        return self.resume
+        latest_ckpt = max(ckpt_files, key=lambda f: int(f.split("_")[-1]))
+        return True, latest_ckpt
+    else:
+        return True, ckpt_config.resume
 
 
 def save_checkpoint(
