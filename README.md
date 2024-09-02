@@ -2,6 +2,10 @@
 
 This repository contains the training code and experiment results for the paper [OpenDiLoCo: An Open-Source Framework for Globally Distributed Low-Communication Training](https://arxiv.org/abs/2407.07852).
 
+
+https://github.com/user-attachments/assets/48e1c96d-e239-4cf9-b48c-b44cfaca3016
+
+
 # Setup
 
 Before running the experiment scripts, you must first setup the environment.
