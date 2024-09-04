@@ -8,6 +8,7 @@ from torch.utils.hooks import RemovableHandle
 from torch.distributed.fsdp import ShardingStrategy
 from torch.utils.data import IterableDataset
 import wandb
+import os
 
 
 _WRAPPED_NAME_TO_REMOVE = ["_forward_module.", "_fsdp_wrapped_module.", "_orig_mod."]
@@ -192,7 +193,8 @@ class DummyLogger:
     def __init__(self, project, config, *args, **kwargs):
         self.project = project
         self.config = config
-        open(project, "a").close()  # Create an empty file at the project path
+        filename = kwargs.get('filename', 'default.log')
+        open(os.path.join(project, filename), "w").close()  # Create an empty file at the project path
 
         self.data = []
 

@@ -29,6 +29,7 @@ from hivemind.utils.timed_storage import DHTExpiration
 from hivemind.optim.optimizer import logger
 from hivemind.optim.progress_tracker import LocalTrainingProgress
 
+from open_diloco.pi_progress_logger import log_progress_to_pi
 from open_diloco.utils import found_inf_grad
 
 
@@ -206,10 +207,31 @@ class DiloCoProgressTracker(ProgressTracker):
     @property
     def real_step(self) -> int:
         return self.local_step + self.local_progress.epoch * self.batch_size
+    
+    def report_local_progress(self, local_epoch: int, samples_accumulated: int, loss: Optional[float] = None):
+        """
+        Update the number of locally accumulated samples and notify to other peers about this.
+        This just calls the parent method, but additionally logs the status to Prime Intellect.
+        """
+        super().report_local_progress(local_epoch, samples_accumulated) # this updates self.local_progress
+        if not self.client_mode:
+            log_progress_to_pi(
+                {
+                    "update_type": "local",
+                    "epoch": self.local_progress.epoch,
+                    "local_step": self.local_step,
+                    "total_local_step": self.real_step,
+                    "local_loss": loss,
+                    "samples_accumulated": self.local_progress.samples_accumulated,
+                    "samples_per_second": self.local_progress.samples_per_second,
+                    "time": self.local_progress.time,
+                }
+            )
 
     def _parse_swarm_progress_data(self, metadata: TrainingProgressSchema) -> GlobalTrainingProgress:
         """Read performance statistics reported by peers, estimate progress towards next batch
-        This function is copy paste from hivemind. Only difference is that if fix the ETA estimation.
+        This function is copy paste from hivemind. Only difference is that if fix the ETA estimation,
+        and it reports progress to Prime Intellect.
         """
         current_time = get_dht_time()
 
@@ -271,7 +293,7 @@ class DiloCoProgressTracker(ProgressTracker):
             f"{self.prefix} has taken {self.local_step} local steps. Peers: {num_peers}, epoch: {self.local_progress.epoch}, steps: {self.real_step}. ETA: {estimated_time_to_next_epoch:.2f}",
         )
 
-        return GlobalTrainingProgress(
+        global_progress = GlobalTrainingProgress(
             global_epoch,
             total_samples_accumulated,
             target_batch_size=self.target_batch_size,
@@ -280,6 +302,20 @@ class DiloCoProgressTracker(ProgressTracker):
             eta_next_epoch=current_time + estimated_time_to_next_epoch,
             next_fetch_time=current_time + time_to_next_fetch,
         )
+        log_progress_to_pi(
+            {
+                "update_type": "global",
+                "epoch": global_progress.epoch,
+                "total_samples_accumulated": global_progress.samples_accumulated,
+                "target_batch_size": global_progress.target_batch_size,
+                "num_peers": global_progress.num_peers,
+                "num_clients": global_progress.num_clients,
+                "eta_next_epoch": global_progress.eta_next_epoch,
+                "next_fetch_time": global_progress.next_fetch_time,
+                "time": current_time,
+            }
+        )
+        return global_progress
 
 
 class AllReduceStrategy(Enum):

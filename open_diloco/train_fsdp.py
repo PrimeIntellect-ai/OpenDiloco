@@ -47,6 +47,11 @@ from open_diloco.ckpt_utils import (
 )
 from open_diloco.hivemind_diloco import AllReduceStrategy, DiLoCoOptimizer
 from open_diloco.utils import WandbLogger, DummyLogger
+from open_diloco.pi_progress_logger import (
+    init_pi_progress_logger,
+    finish_pi_progress_logger,
+    log_progress_to_pi,
+)
 
 from hivemind.dht.dht import DHT
 from hivemind.utils.networking import log_visible_maddrs
@@ -121,6 +126,7 @@ class Config(BaseConfig):
     # Checkpointing and logging
     project: str = "hivemind_debug"
     metric_logger_type: Literal["wandb", "dummy"] = "wandb"
+    status_logger_type: Literal["prime", "dummy"] = "prime"
     log_activations_steps: int | None = None
     ckpt: CkptConfig = CkptConfig()
     # Hivemind
@@ -209,7 +215,9 @@ def train(config: Config):
             host_maddrs=config.hv.host_maddrs,
             announce_maddrs=config.hv.announce_maddrs,
         )
-        log_visible_maddrs(dht.get_visible_maddrs(), only_p2p=False)
+        maddrs = dht.get_visible_maddrs(latest=True)
+        log_visible_maddrs(maddrs, only_p2p=False)
+        init_pi_progress_logger(dht.peer_id, config.project, config.model_dump(), maddrs=maddrs)
 
     if local_rank == 0:
         check_checkpoint_path_access(config.ckpt.path, rank, config.hv.world_rank if config.hv else None)
@@ -459,6 +467,14 @@ def train(config: Config):
                 current_time = time.time()
 
                 metric_logger.log(metrics)
+                # log progress to prime intellect
+                pi_update = metrics.copy()
+                pi_update["update_type"] = "global"
+                pi_update["epoch"] = real_step
+                pi_update["time"] = time.time()
+                # lowercase all keys for sending to pi
+                pi_update = {k.lower(): v for k, v in pi_update.items()}
+                log_progress_to_pi(pi_update)
 
                 if config.hv is None:
                     log(
@@ -513,6 +529,7 @@ def train(config: Config):
 
     log("Training completed.")
     if rank == 0:
+        finish_pi_progress_logger()
         metric_logger.finish()
 
 
