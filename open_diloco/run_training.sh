@@ -8,8 +8,7 @@
 
 
 # you can either pass a fixed initial peer or set it to auto and the script will start a dht server for you
-## # ./run_training.sh 2 1 auto --per-device-train-batch-size 16 --batch-size 512 --local-steps 10  --total-steps 88000 --c4-tiny
-
+## ./run_training.sh 4 1 auto  --per-device-train-batch-size 8 --total-batch-size 128 --lr 1e-2 --path-model ../tests/models/llama-2m-fresh --project debug  --no-torch-compile --hv.local-steps 100  --fake-data --hv.matchmaking_time 2
 
 # Function to get CUDA devices based on the number of GPUs and index
 function get_cuda_devices() {
