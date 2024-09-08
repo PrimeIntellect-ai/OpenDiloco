@@ -7,6 +7,7 @@ torchrun --nproc_per_node=2 \
 """
 
 from functools import partial
+import math
 import os
 import time
 from contextlib import nullcontext
@@ -26,7 +27,6 @@ from transformers import (
     DataCollatorForLanguageModeling,
     LlamaConfig,
     LlamaForCausalLM,
-    get_cosine_schedule_with_warmup,
 )
 from torch.distributed.fsdp import (
     FullyShardedDataParallel as FSDP,
@@ -47,6 +47,7 @@ from open_diloco.ckpt_utils import (
 )
 from open_diloco.hivemind_diloco import AllReduceStrategy, DiLoCoOptimizer
 from open_diloco.utils import WandbLogger, DummyLogger
+from torch.optim.lr_scheduler import LambdaLR
 
 from hivemind.dht.dht import DHT
 from hivemind.utils.networking import log_visible_maddrs
@@ -91,6 +92,8 @@ class HvConfig(BaseConfig):
     world_rank: int
     galaxy_size: int
     fail_rank_drop: bool = False  # fail if we lose a diloco worker
+    warmup_outerstep: int = 10
+    outer_scheduler: bool = False
 
     @model_validator(mode="before")
     def cast_str_to_list(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -174,6 +177,61 @@ def get_model(config: Config) -> LlamaForCausalLM:
     return LlamaForCausalLM.from_pretrained(pretrained_model_name_or_path=config.path_model, config=config_model)
 
 
+def _get_cosine_schedule_with_warmup_lr_lambda(
+    current_step: int,
+    *,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    num_cycles: float,
+    min_lr_rate: float = 0.0,
+):
+    if current_step < num_warmup_steps:
+        return float(current_step) / float(max(1, num_warmup_steps))
+
+    progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+    factor = 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
+    factor = factor * (1 - min_lr_rate) + min_lr_rate
+    return max(0, factor)
+
+
+def get_cosine_schedule_with_warmup(optimizer, config: Config):
+    lambda_lr = partial(
+        _get_cosine_schedule_with_warmup_lr_lambda,
+        num_warmup_steps=config.warmup_steps,
+        num_training_steps=config.total_steps,
+        num_cycles=0.5,
+    )
+    return LambdaLR(optimizer, lambda_lr, -1)
+
+
+def _get_lr_outer(
+    current_step: int,
+    *,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    num_cycles: float,
+    min_lr_rate: float = 0.0,
+):
+    if current_step < num_warmup_steps:
+        return 1
+
+    progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+    factor = 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
+    factor = factor * (1 - min_lr_rate) + min_lr_rate
+    return max(0, factor)
+
+
+def get_lr_outer(optimizer, config: Config):
+    lambda_lr = partial(
+        _get_lr_outer,
+        num_warmup_steps=config.warmup_steps,
+        # num_training_steps=config.total_steps,
+        num_training_steps=config.total_steps,
+        num_cycles=0.5,
+    )
+    return LambdaLR(optimizer, lambda_lr, -1)
+
+
 def train(config: Config):
     sharding_strategy = get_sharding_strategy(config.sharding_strategy)
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -255,9 +313,11 @@ def train(config: Config):
     def scheduler_fn(opt):
         return get_cosine_schedule_with_warmup(
             opt,
-            num_warmup_steps=config.warmup_steps,
-            num_training_steps=config.total_steps,
+            config=config,
         )
+
+    def outer_scheduler_fn(opt):
+        return get_lr_outer(opt, config=config)
 
     if config.hv is not None:
         if resume_from_ckpt:
@@ -288,6 +348,7 @@ def train(config: Config):
             outer_optimizer=outer_optimizer,
             inner_optimizer=inner_optimizer,
             scheduler=None,
+            outer_scheduler=outer_scheduler_fn if config.hv.outer_scheduler else None,
             params=model.parameters(),
             delay_optimizer_step=False,
             delay_grad_averaging=False,
@@ -316,6 +377,7 @@ def train(config: Config):
                 model=model,
                 optimizer=optimizer.inner_optimizer,
                 scheduler=scheduler,
+                outer_scheduler=optimizer.outer_scheduler,
                 outer_optimizer=optimizer.state_averager.optimizer,
                 scaler=scaler,
                 data_loader=train_dataloader,
@@ -405,6 +467,7 @@ def train(config: Config):
             scaler.update()
 
             scheduler.step()
+
             optimizer.zero_grad()
 
             if config.hv is not None:
@@ -481,6 +544,7 @@ def train(config: Config):
                             model=model,
                             optimizer=optimizer.inner_optimizer,
                             scheduler=scheduler,
+                            outer_scheduler=optimizer.outer_scheduler,
                             outer_optimizer=optimizer.state_averager.optimizer,
                             loss=loss_batch.item(),
                             scaler=scaler,

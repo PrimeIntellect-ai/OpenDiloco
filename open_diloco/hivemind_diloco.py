@@ -334,6 +334,7 @@ class DiLoCoOptimizer(Optimizer):
         inner_optimizer: OptimizerFactory,
         params: Optional[Union[Parameters, ParamGroups]] = None,
         scheduler: Optional[SchedulerFactory] = None,
+        outer_scheduler: Optional[SchedulerFactory] = None,
         averager_opts: Optional[dict] = None,
         grad_compression: CompressionBase = NoCompression(),
         tracker_opts: Optional[dict] = None,
@@ -365,7 +366,7 @@ class DiLoCoOptimizer(Optimizer):
         # since we have two optimizers, we need to persist the params to a list
         self.num_inner_steps = num_inner_steps
 
-        for opt_or_scheduler in [outer_optimizer, scheduler]:
+        for opt_or_scheduler in [outer_optimizer, scheduler, outer_scheduler]:
             if not (callable(opt_or_scheduler) or opt_or_scheduler is None):
                 raise TypeError("You need to pass inner and outer optimizer as well as scheduler as callable")
 
@@ -404,6 +405,8 @@ class DiLoCoOptimizer(Optimizer):
             **kwargs,
         )
         self.diloco_grad_averager = self._make_gradient_averager(compression=grad_compression)
+
+        self.outer_scheduler = outer_scheduler(self.state_averager.optimizer) if outer_scheduler else None
 
     def _check_kwargs(self, kwargs) -> None:
         """DiLoCo Optimizer only support a subset of Hivemind Optimizer kwargs.
@@ -554,6 +557,9 @@ class DiLoCoOptimizer(Optimizer):
 
         if self.tracker.ready_to_update_epoch:
             self._update_global_epoch()
+
+        if self.outer_scheduler is not None:
+            self.outer_scheduler.step()
 
         return loss
 

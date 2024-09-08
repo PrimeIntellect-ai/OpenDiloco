@@ -50,6 +50,7 @@ def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LambdaLR,
+    outer_scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
     outer_optimizer: torch.optim.Optimizer | None = None,
     scaler: torch.cuda.amp.GradScaler | None = None,
     loss: float | None = None,
@@ -91,6 +92,8 @@ def save_checkpoint(
 
     # 2. Save global states
     global_state_dict = {"scheduler": scheduler.state_dict(), "loss": loss if loss is not None else 0}
+    if outer_scheduler is not None:
+        global_state_dict["outer_scheduler"] = outer_scheduler.state_dict()
     if outer_optimizer is not None:
         global_state_dict["outer_optimizer"] = outer_optimizer.state_dict()
     if scaler is not None:
@@ -105,6 +108,7 @@ def load_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
+    outer_scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
     outer_optimizer: torch.optim.Optimizer | None = None,
     scaler: torch.cuda.amp.GradScaler | None = None,
     data_loader: StatefulDataLoader | None = None,
@@ -149,8 +153,13 @@ def load_checkpoint(
     if scheduler is not None:
         scheduler.load_state_dict(global_state_dict["scheduler"])
         optimizer.param_groups[0]["lr"] = scheduler.get_last_lr()[0]
+
     if outer_optimizer is not None:
         outer_optimizer.load_state_dict(global_state_dict["outer_optimizer"])
+        if outer_scheduler is not None:
+            outer_scheduler.load_state_dict(global_state_dict["outer_scheduler"])
+            outer_optimizer.param_groups[0]["lr"] = outer_scheduler.get_last_lr()[0]
+
     if scaler is not None:
         scaler.load_state_dict(global_state_dict["scaler"])
     return global_state_dict["loss"]
