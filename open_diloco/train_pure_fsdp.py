@@ -110,7 +110,14 @@ def get_model(config: Config) -> LlamaForCausalLM:
 
 
 def get_offloaded_param(model: LlamaForCausalLM) -> list[torch.Tensor]:
-    return [param.data.detach().clone().to("cpu") for param in model.parameters()]
+    offloaded_params = []
+    for param in model.parameters():
+        if param.requires_grad:
+            offloaded_param = param.data.detach().clone().to("cpu")
+            offloaded_param.requires_grad = True
+            offloaded_params.append(offloaded_param)
+
+    return offloaded_params
 
 
 def train(config: Config):
@@ -240,6 +247,9 @@ def train(config: Config):
                 dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=global_pg)
             else:
                 dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.AVG, group=global_pg)
+
+        for param in outer_optimizer.param_groups[0]["params"]:
+            print(param.requires_grad)
 
         outer_optimizer.step()
         outer_optimizer.zero_grad()
