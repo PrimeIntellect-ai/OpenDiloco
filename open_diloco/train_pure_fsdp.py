@@ -68,6 +68,7 @@ class Config(BaseConfig):
     project: str = "debug"
     metric_logger_type: Literal["wandb", "dummy"] = "wandb"
     fake_data: bool = False
+    dataset_name_or_path: str = "allenai/c4"
 
 
 def get_dataloader(tokenizer, world_size, rank, config: Config) -> StatefulDataLoader:
@@ -127,7 +128,7 @@ def train(config: Config):
     tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
     tokenizer.pad_token = "</s>"  # Ensure pad token is set for models that need it
 
-    train_dataloader = get_dataloader(tokenizer, world_size, rank, local_rank, config)
+    train_dataloader = get_dataloader(tokenizer, world_size, rank, config)
 
     model = get_model(config)
     model = model.to(local_rank)
