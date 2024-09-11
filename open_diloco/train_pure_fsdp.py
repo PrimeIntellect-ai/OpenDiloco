@@ -124,11 +124,12 @@ def train(config: Config):
     sharding_strategy = get_sharding_strategy(config.sharding_strategy)
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
+    local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
     rank = int(os.environ["RANK"])
 
     # batch_size is the total batch size for all GPUs
-    assert config.total_batch_size % world_size == 0
-    batch_size = config.total_batch_size // world_size
+    assert config.total_batch_size % local_world_size == 0
+    batch_size = config.total_batch_size // local_world_size
 
     assert batch_size % config.per_device_train_batch_size == 0
     gradient_accumulation_steps = batch_size // config.per_device_train_batch_size
@@ -141,7 +142,6 @@ def train(config: Config):
     model = get_model(config)
     model = model.to(local_rank)
 
-    local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
     nnodes = world_size // local_world_size
 
     # right now device mesh does not support two backend so we just create two identicaly mesh expect the backend
