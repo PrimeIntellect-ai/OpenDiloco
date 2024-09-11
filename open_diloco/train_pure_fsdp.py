@@ -248,9 +248,6 @@ def train(config: Config):
             else:
                 dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.AVG, group=global_pg)
 
-        for param in outer_optimizer.param_groups[0]["params"]:
-            print(param.requires_grad)
-
         outer_optimizer.step()
         outer_optimizer.zero_grad()
 
