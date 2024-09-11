@@ -234,7 +234,7 @@ def train(config: Config):
             # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
-            if param_offloaded.grad.device != torch.device("cpu"):
+            if param_offloaded.grad.device == torch.device("cpu"):
                 # gloo does not support AVG
                 param_offloaded.grad = param_offloaded.grad / global_pg.size()
                 dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=global_pg)
