@@ -57,7 +57,7 @@ mkdir -p logs
 for i in $(seq 0 $(($N - 1 )))
 do
     > logs/log$i
-    CUDA_VISIBLE_DEVICES=$(get_cuda_devices $NUM_GPU $i) uv run torchrun --nproc_per_node=$NUM_GPU --node-rank $i --rdzv-endpoint localhost:9999 --nnodes=$N  $@  > logs/log$i 2>&1 &
+    CUDA_VISIBLE_DEVICES=$(get_cuda_devices $NUM_GPU $i) torchrun --nproc_per_node=$NUM_GPU --node-rank $i --rdzv-endpoint localhost:9999 --nnodes=$N  $@  > logs/log$i 2>&1 &
     child_pids+=($!)
 done
 
