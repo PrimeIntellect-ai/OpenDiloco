@@ -243,14 +243,15 @@ def train(config: Config):
             
             mask = torch.rand_like(param_offloaded.grad) > 0.95
             
-            data_to_all_reduce = param_offloaded.grad * mask
+            data_to_send = param_offloaded.grad * mask
+            data_to_send_pre_reduce = data_to_send.clone()
 
             # gloo does not support AVG
-            data_to_all_reduce = data_to_all_reduce / global_pg.size()
-            dist.all_reduce(data_to_all_reduce, op=dist.ReduceOp.SUM, group=global_pg)
+            data_to_send = data_to_send / global_pg.size()
+            dist.all_reduce(data_to_send, op=dist.ReduceOp.SUM, group=global_pg)
 
-            param_offloaded.grad += data_to_all_reduce
-
+            param_offloaded.grad += data_to_send - data_to_send_pre_reduce # removing the 
+ 
         outer_optimizer.step()
         outer_optimizer.zero_grad()
 
