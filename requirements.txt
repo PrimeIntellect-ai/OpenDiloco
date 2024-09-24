@@ -6,4 +6,6 @@ fsspec[gcs]>=2024.3.1
 torch>=2.3.1
 hivemind @ git+https://github.com/learning-at-home/hivemind.git@213bff9
 pydantic_config @ git+https://github.com/samsja/pydantic_config.git@8e19e05
+python-dotenv>=1.0.1
+web3>=7.2.0
 
