@@ -91,6 +91,7 @@ class HvConfig(BaseConfig):
     world_rank: int
     galaxy_size: int
     fail_rank_drop: bool = False  # fail if we lose a diloco worker
+    
 
     @model_validator(mode="before")
     def cast_str_to_list(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -449,12 +450,12 @@ def train(config: Config):
                     metrics.update(log_activations)
                     log_activations = {}
 
-                if world_messenger_hv and num_peers < max_num_peers:
-                    log(message=f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}")
-                    if config.hv.fail_rank_drop:
-                        raise ValueError(
-                            f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}"
-                        )
+                # if world_messenger_hv and num_peers < max_num_peers:
+                    #log(message=f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}")
+                    #if config.hv.fail_rank_drop:
+                        #raise ValueError(
+                          #  f"Lost a diloco worker, num_peers: {num_peers}, galaxy_size: {config.hv.galaxy_size}"
+                        #)
 
                 current_time = time.time()
 
@@ -510,7 +511,9 @@ def train(config: Config):
 
             if config.max_steps is not None and real_step >= config.max_steps:
                 break
-
+            if real_step >= 50:
+                if config.hv is not None and config.hv.world_rank == 1:
+                    break
     log("Training completed.")
     if rank == 0:
         metric_logger.finish()
