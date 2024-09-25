@@ -240,14 +240,18 @@ def train(config: Config):
         for param_offloaded, param in zip(cpu_model, model.parameters()):
             # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
+            
+            mask = torch.rand_like(param_offloaded.grad) > 0.95
+            
+            data_to_send = param_offloaded.grad * mask
+            data_to_send_pre_reduce = data_to_send.clone()
 
-            if param_offloaded.grad.device == torch.device("cpu"):
-                # gloo does not support AVG
-                param_offloaded.grad = param_offloaded.grad / global_pg.size()
-                dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=global_pg)
-            else:
-                dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.AVG, group=global_pg)
+            # gloo does not support AVG
+            data_to_send = data_to_send / global_pg.size()
+            dist.all_reduce(data_to_send, op=dist.ReduceOp.SUM, group=global_pg)
 
+            param_offloaded.grad += data_to_send - data_to_send_pre_reduce # removing the 
+ 
         outer_optimizer.step()
         outer_optimizer.zero_grad()
 
