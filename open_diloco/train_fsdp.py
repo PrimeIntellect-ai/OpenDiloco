@@ -180,7 +180,7 @@ def train(config: Config):
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     rank = int(os.environ["RANK"])
-
+    world_rank_list = list(range(config.hv.galaxy_size))
     world_messenger_hv = config.hv is not None and local_rank == 0
 
     # batch_size is the total batch size for all GPUs
@@ -358,7 +358,7 @@ def train(config: Config):
         max_num_peers = 0
 
     log_activations = {}
-
+    log_drop = True
     for step, batch in enumerate(iterable=train_dataloader, start=start_step * gradient_accumulation_steps):
         real_step = (step + 1) // gradient_accumulation_steps
         is_accumulating = bool((step + 1) % gradient_accumulation_steps)
@@ -511,8 +511,12 @@ def train(config: Config):
 
             if config.max_steps is not None and real_step >= config.max_steps:
                 break
-            if real_step >= 50:
-                if config.hv is not None and config.hv.world_rank == 1:
+    
+            if real_step >= int(config.total_steps)//2:
+                if log_drop:
+                    log(f"Dropping worker world ranks {world_rank_list[config.hv.galaxy_size//2:]}")
+                    log_drop = False
+                if config.hv is not None and config.hv.world_rank in world_rank_list[config.hv.galaxy_size//2:]:
                     break
     log("Training completed.")
     if rank == 0:
