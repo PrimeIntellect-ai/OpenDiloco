@@ -164,6 +164,8 @@ class DiLoCoGradAverager(DecentralizedAverager):
                 # opt_param is the param that will be all_reduce, it is suppose to be on cpu
                 # main_param is the param that has been updated by the inner optimizer, it is suppose to be on gpu
                 grad = opt_param.data - main_param.detach().to(opt_param.device)
+                mask = torch.rand_like(grad) > 0.95
+                grad *= mask
                 averaged_grad.copy_(grad, non_blocking=True)
 
     def notify_used_averaged_gradients(self):
